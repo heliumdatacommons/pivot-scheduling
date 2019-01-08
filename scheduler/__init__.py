@@ -1,5 +1,6 @@
 import simpy
 import inspect
+import bisect as bi
 import numpy as np
 import numpy.random as rnd
 
@@ -51,7 +52,7 @@ class GlobalScheduler(Loggable):
   def _listen(self):
     while True:
       success, c = yield self.__notify_q.get()
-      self.logger.info('[%.3f] Container %s finished: %s'%(self.__env.now, c.id, success))
+      self.logger.debug('[%.3f] Container %s finished: %s'%(self.__env.now, c.id, success))
       if not c.appliance:
         self.logger.error('Appliance of container %s is not set'%c.id)
         continue
@@ -107,7 +108,7 @@ class LocalSchedulerBase(Loggable):
       while len(self.__ready_q) > 0:
         _, c = self.__ready_q.popitem()
         if c.is_nascent:
-          self.logger.info(
+          self.logger.debug(
             '[%d] Dispatched container %s, runtime: %.3f'%(self.__env.now, c.id, c.runtime))
           yield self.__dispatch_q.put(c)
           c.set_submitted()
@@ -167,7 +168,6 @@ class LocalSchedulerBase(Loggable):
                      gpus=resc[hid]['gpus'] - contr.gpus)
 
 
-
 class OpportunisticLocalScheduler(LocalSchedulerBase):
 
   def __init__(self, *args, **kwargs):
@@ -186,11 +186,13 @@ class OpportunisticLocalScheduler(LocalSchedulerBase):
     assert isinstance(success, bool)
     assert isinstance(c, appliance.Container)
     app, env = self.appliance, self.env
-    if not success:
+    if success:
+      c.set_finished()
+    else:
       c.set_nascent()
       c.placement = None
     containers = self.clear_wait_queue() + (app.get_ready_successors(c.id) if success else [c])
-    self.logger.info('[%.3f] local scheduler gets notified, next batch of containers: %s'%(env.now, containers))
+    self.logger.debug('[%.3f] local scheduler gets notified, next batch of containers: %s'%(env.now, containers))
     self.schedule(containers)
 
   def schedule(self, containers):
@@ -205,15 +207,15 @@ class OpportunisticLocalScheduler(LocalSchedulerBase):
       host = self._select_hosts(c)
       if host is None:
         h = self.cluster.hosts[0].resource
-        self.logger.info('[%.3f] Container %s is put into the waiting queue'%(env.now, c.id))
-        self.logger.info('Demand: %.1f cpus, %.1f mem, %.1f disk, %.1f gpus'%(c.cpus, c.mem, c.disk, c.gpus))
-        self.logger.info('Available: %.1f cpus, %.1f mem, %.1f disk, %.1f gpus'%(h.cpus_available,
+        self.logger.debug('[%.3f] Container %s is put into the waiting queue'%(env.now, c.id))
+        self.logger.debug('Demand: %.1f cpus, %.1f mem, %.1f disk, %.1f gpus'%(c.cpus, c.mem, c.disk, c.gpus))
+        self.logger.debug('Available: %.1f cpus, %.1f mem, %.1f disk, %.1f gpus'%(h.cpus_available,
                                                                                  h.mem_available,
                                                                                  h.disk_available,
                                                                                  h.gpus_available))
         self.add_to_wait_queue(c)
       else:
-        self.logger.info('[%.3f] Container %s is placed on host %s'%(env.now, c.id, host.id))
+        self.logger.debug('[%.3f] Container %s is placed on host %s'%(env.now, c.id, host.id))
         self.allocate_resource(c, host)
         self.add_to_ready_queue(c)
 
@@ -229,8 +231,11 @@ class OpportunisticLocalScheduler(LocalSchedulerBase):
 
 class CostAwareLocalScheduler(LocalSchedulerBase):
 
+
   def __init__(self, *args, **kwargs):
+    epsilon = kwargs.pop('epsilon')
     super(CostAwareLocalScheduler, self).__init__(*args, **kwargs)
+    self.__epsilon = epsilon
 
   def init(self):
     self.schedule(self.appliance.get_sources())
@@ -239,11 +244,13 @@ class CostAwareLocalScheduler(LocalSchedulerBase):
     assert isinstance(success, bool)
     assert isinstance(c, appliance.Container)
     app, env = self.appliance, self.env
-    if not success:
+    if success:
+      c.set_finished()
+    else:
       c.set_nascent()
       c.placement = None
     containers = self.clear_wait_queue() + (app.get_ready_successors(c.id) if c.is_finished else [c])
-    self.logger.info('[%.3f] local scheduler gets notified, next batch of containers: %s'%(env.now, containers))
+    self.logger.debug('[%.3f] local scheduler gets notified, next batch of containers: %s'%(env.now, containers))
     self.schedule(containers)
 
   def schedule(self, containers):
@@ -254,15 +261,15 @@ class CostAwareLocalScheduler(LocalSchedulerBase):
     for base, contrs in groups.items():
       if not base:
         base = rnd.choice(meta.zones)
-      hosts = self._sort_hosts(self.cluster.hosts, base)
+      # hosts = self._sort_hosts(self.cluster.hosts, base)
       contrs = self._sort_containers(contrs)
-      for c, h in self._first_fit(hosts, contrs):
+      for c, h in self._first_fit(self.cluster.hosts, contrs, base):
         if h is None:
-          self.logger.info('[%.3f] Container %s is put into the waiting queue'%(env.now, c.id))
-          self.logger.info('Demand: %.1f cpus, %.1f mem, %.1f disk, %.1f gpus'%(c.cpus, c.mem, c.disk, c.gpus))
+          self.logger.debug('[%.3f] Container %s is put into the waiting queue'%(env.now, c.id))
+          self.logger.debug('Demand: %.1f cpus, %.1f mem, %.1f disk, %.1f gpus'%(c.cpus, c.mem, c.disk, c.gpus))
           self.add_to_wait_queue(c)
         else:
-          self.logger.info('[%.3f] Container %s is placed on host %s'%(env.now, c.id, h.id))
+          self.logger.debug('[%.3f] Container %s is placed on host %s'%(env.now, c.id, h.id))
           self.allocate_resource(c, h)
           self.add_to_ready_queue(c)
 
@@ -301,17 +308,39 @@ class CostAwareLocalScheduler(LocalSchedulerBase):
 
     return sorted(contrs, key=container_score_func)
 
-  def _first_fit(self, hosts, contrs):
-    resc = self.resource_info
+  def _first_fit(self, hosts, contrs, base):
+    resc, meta = self.resource_info, self.cluster.meta
+
+    def host_score_func(h):
+      assert isinstance(h, resource.Host)
+      r = self._calc_euclidean_dist(resc[h.id]['cpus'], resc[h.id]['mem'],
+                                    resc[h.id]['disk'], resc[h.id]['gpus'])
+      bw = meta.bw[(base, h.locality)] + meta.bw[(h.locality, base)]
+
+      c = meta.cost[(base, h.locality)] + meta.cost[(h.locality, base)]
+      return c * (placement_counter[h] + self.__epsilon)/(r * bw)
+
     placements = []
+    placement_counter = defaultdict(int)
+    hosts = sorted(hosts, key=host_score_func)
+    scores = [host_score_func(h) for h in hosts]
+    last_idx = None
     for c in contrs:
       placed = False
-      for h in hosts:
+      if last_idx is not None:
+        h, old_score = hosts.pop(last_idx), scores.pop(last_idx)
+        new_score = host_score_func(h)
+        pos = bi.bisect(scores, new_score)
+        scores.insert(pos, new_score)
+        hosts.insert(pos, h)
+      for i, h in enumerate(hosts):
         if resc[h.id]['cpus'] >= c.cpus \
             and resc[h.id]['mem'] >= c.mem \
             and resc[h.id]['disk'] >= c.disk \
             and resc[h.id]['gpus'] >= c.gpus:
           placements += (c, h),
+          placement_counter[h] += 1
+          last_idx = i
           placed = True
           self._subtract_resource_usage(h.id, c.cpus, c.mem, c.disk, c.gpus)
           break
