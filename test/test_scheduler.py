@@ -4,8 +4,8 @@ import numpy as np
 import numpy.random as rnd
 
 from appliance import Appliance, Container
-from resource import Cluster, Host, Locality, Cloud, Region, Zone
-from scheduler import GlobalScheduler
+from resources import Cluster, Host, Locality, Cloud, Region, Zone
+from scheduler import GlobalSchedulerBase
 
 
 class OpportunisticSchedulerTest(unittest.TestCase):
@@ -28,23 +28,23 @@ class OpportunisticSchedulerTest(unittest.TestCase):
        indicates all the containers are run in parallel)
 
     """
-    from scheduler import OpportunisticLocalScheduler
+    from scheduler import OpportunisticGlobalScheduler
     env = self.env
     contrs = [Container(env, str(cid), 1, 1024, 1024, 1, rnd.uniform(2, 100)) for cid in range(16)]
     app = Appliance(env, 'test', contrs)
     dispatch_q, notify_q = simpy.Store(env), simpy.Store(env)
     hosts = [Host(env, str(i), 16, 1024 * 16, 1024 * 16, 16) for i in range(1)]
     cluster = Cluster(env, dispatch_q, notify_q, hosts)
-    global_scheduler = GlobalScheduler(env, dispatch_q, notify_q, hosts)
+    global_scheduler = OpportunisticGlobalScheduler(env, dispatch_q, notify_q, cluster)
     cluster.start()
     global_scheduler.start()
-    global_scheduler.submit(app, OpportunisticLocalScheduler)
+    global_scheduler.submit(app)
     local_scheduler = global_scheduler.get_scheduler(app.id)
     env.run()
     self.assertTrue(app.is_finished)
     self.assertTrue(all([c.is_finished for c in contrs]))
     self.assertAlmostEqual(env.now, max([c.runtime for c in contrs]),
-                           delta=local_scheduler.schedule_interval)
+                           delta=local_scheduler.interval)
 
   def test_one_app_w_dep(self):
     """
@@ -61,7 +61,7 @@ class OpportunisticSchedulerTest(unittest.TestCase):
        indicates all the containers are run in parallel)
 
     """
-    from scheduler import OpportunisticLocalScheduler
+    from scheduler import OpportunisticGlobalScheduler
     env = self.env
     contrs = [Container(env, str(cid), 1, 1024, 1024, 1, rnd.uniform(2, 100)) for cid in range(16)]
     app = Appliance(env, 'test', contrs)
@@ -70,16 +70,16 @@ class OpportunisticSchedulerTest(unittest.TestCase):
     dispatch_q, notify_q = simpy.Store(env), simpy.Store(env)
     hosts = [Host(env, str(i), 1, 1024, 1024, 1) for i in range(1)]
     cluster = Cluster(env, dispatch_q, notify_q, hosts)
-    global_scheduler = GlobalScheduler(env, dispatch_q, notify_q, hosts)
+    global_scheduler = OpportunisticGlobalScheduler(env, dispatch_q, notify_q, cluster)
     cluster.start()
     global_scheduler.start()
-    global_scheduler.submit(app, OpportunisticLocalScheduler)
+    global_scheduler.submit(app)
     local_scheduler = global_scheduler.get_scheduler(app.id)
     env.run()
     self.assertTrue(app.is_finished)
     self.assertTrue(all([c.is_finished for c in contrs]))
     self.assertAlmostEqual(env.now, sum([c.runtime for c in contrs]),
-                           delta=(local_scheduler.schedule_interval - 1) * 16)
+                           delta=(local_scheduler.interval - 1) * 16)
 
   def test_insufficient_resource_one_app(self):
     """
@@ -101,7 +101,7 @@ class OpportunisticSchedulerTest(unittest.TestCase):
     dispatch_q, notify_q = simpy.Store(env), simpy.Store(env)
     hosts = [Host(env, str(i), 2, 1024 * 2, 1024 * 2, 2) for i in range(4)]
     cluster = Cluster(env, dispatch_q, notify_q, hosts)
-    scheduler = GlobalScheduler(env, dispatch_q, notify_q, hosts)
+    scheduler = GlobalSchedulerBase(env, dispatch_q, notify_q, hosts)
     cluster.start()
     scheduler.start()
     scheduler.submit(app, OpportunisticLocalScheduler)

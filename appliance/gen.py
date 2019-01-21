@@ -102,7 +102,7 @@ class RandomApplianceGenerator(Loggable):
     for u, v in dag.edges:
       containers[v].add_dependencies(str(u))
     app = Appliance(self.__env, str(uuid.uuid4()), containers.values())
-    app.visualize()
+    # app.visualize()
     return app
 
 
@@ -162,9 +162,9 @@ class DataParallelApplianceGenerator(Loggable):
     assert 0 < min_mem <= max_mem
     assert 0 <= min_disk <= max_disk
     assert isinstance(min_gpus, int) and isinstance(max_gpus, int) and 0 <= min_gpus <= max_gpus
-    assert 0 <= min_seq_steps < max_seq_steps
-    assert 0 <= min_parallel_steps < max_parallel_steps
-    assert 1 < min_parallel_level < max_parallel_level
+    assert 0 <= min_seq_steps <= max_seq_steps
+    assert 0 <= min_parallel_steps <= max_parallel_steps
+    assert 1 < min_parallel_level <= max_parallel_level
     assert 0 < min_runtime <= max_runtime
     assert 0 <= min_output_nbytes <= max_output_nbytes
     self.__env = env
@@ -172,9 +172,9 @@ class DataParallelApplianceGenerator(Loggable):
     self.__min_mem, self.__max_mem = min_mem, max_mem
     self.__min_disk, self.__max_disk = min_disk, max_disk
     self.__min_gpus, self.__max_gpus = min_gpus, max_gpus
-    self.__min_seq_steps, self.__max_seq_steps = min_seq_steps, max_seq_steps
-    self.__min_parallel_steps, self.__max_parallel_steps = min_parallel_steps, max_parallel_steps
-    self.__min_parallel_level, self.__max_parallel_level = min_parallel_level, max_parallel_level
+    self.__min_seq_steps, self.__max_seq_steps = min_seq_steps, max_seq_steps + 1
+    self.__min_parallel_steps, self.__max_parallel_steps = min_parallel_steps, max_parallel_steps + 1
+    self.__min_parallel_level, self.__max_parallel_level = min_parallel_level, max_parallel_level + 1
     self.__min_runtime, self.__max_runtime = min_runtime, max_runtime
     self.__min_output_nbytes, self.__max_output_nbytes = min_output_nbytes, max_output_nbytes
     rnd.seed(seed)
@@ -183,26 +183,20 @@ class DataParallelApplianceGenerator(Loggable):
     n_seq_steps = rnd.randint(self.__min_seq_steps, self.__max_seq_steps)
     n_parallel_steps = rnd.randint(self.__min_parallel_steps, self.__max_parallel_steps)
     total_steps = n_seq_steps + n_parallel_steps
+    assert total_steps > 0
     p_seq_step = n_seq_steps/total_steps
-    cpus = rnd.uniform(self.__min_cpus, self.__max_cpus)
-    mem = rnd.randint(self.__min_mem, self.__max_mem)
-    disk = rnd.randint(self.__min_disk, self.__max_disk)
-    gpus = rnd.randint(self.__min_gpus, self.__max_gpus)
-    runtime = rnd.uniform(self.__min_runtime, self.__max_runtime)
-    output_nbytes = rnd.randint(self.__min_output_nbytes, self.__max_output_nbytes)
-    c = Container(self.__env, '1', cpus=cpus, mem=mem, disk=disk, gpus=gpus,
-                  runtime=runtime, output_nbytes=output_nbytes)
-    n_nodes = 1
-    containers, last_step = [c], ['1']
+    n_nodes = 0
+    containers, last_step = [], []
     for is_seq in rnd.choice(a=[True, False], size=total_steps, p=[p_seq_step, 1 - p_seq_step]):
       cpus = rnd.uniform(self.__min_cpus, self.__max_cpus)
       mem = rnd.randint(self.__min_mem, self.__max_mem)
       disk = rnd.randint(self.__min_disk, self.__max_disk)
       gpus = rnd.randint(self.__min_gpus, self.__max_gpus)
-      runtime = rnd.uniform(self.__min_runtime, self.__max_runtime)
-      output_nbytes = rnd.randint(self.__min_output_nbytes, self.__max_output_nbytes)
+      unit_output_nbytes = rnd.randint(self.__min_output_nbytes, self.__max_output_nbytes)
       if is_seq:
         cid = n_nodes + 1
+        runtime = rnd.uniform(self.__min_runtime, self.__max_runtime)
+        output_nbytes = unit_output_nbytes * runtime
         c = Container(self.__env, str(cid), cpus=cpus, mem=mem, disk=disk, gpus=gpus,
                       runtime=runtime, output_nbytes=output_nbytes)
         for prev in last_step:
@@ -212,13 +206,16 @@ class DataParallelApplianceGenerator(Loggable):
         n_nodes += 1
       else:
         parallel_level = rnd.randint(self.__min_parallel_level, self.__max_parallel_level) \
-          if len(last_step) == 1 else len(last_step)
+          if len(last_step) < 2 else len(last_step)
         for i, cid in enumerate(range(n_nodes + 1, n_nodes + parallel_level + 1)):
+          runtime = rnd.uniform(self.__min_runtime, self.__max_runtime)
+          output_nbytes = unit_output_nbytes * runtime
           c = Container(self.__env, str(cid), cpus=cpus, mem=mem, disk=disk,gpus=gpus,
                         runtime=runtime, output_nbytes=output_nbytes)
-          if last_step:
-            prev = last_step[0 if len(last_step) == 1 else i]
-            c.add_dependencies(prev)
+          cur = i % parallel_level
+          while cur < len(last_step):
+            c.add_dependencies(last_step[cur])
+            cur += parallel_level
           containers += c,
         last_step = [str(i) for i in range(n_nodes + 1, n_nodes + parallel_level + 1)]
         n_nodes += parallel_level
