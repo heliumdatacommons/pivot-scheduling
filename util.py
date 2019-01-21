@@ -24,3 +24,11 @@ class Singleton(type):
     if cls not in cls._instances:
       cls._instances[cls] = super(Singleton, cls).__call__(*args, **kwargs)
     return cls._instances[cls]
+
+
+def floor(n, div_size):
+  return n // div_size * div_size
+
+
+def ceil(n, div_size):
+  return (n // div_size + 1) * div_size

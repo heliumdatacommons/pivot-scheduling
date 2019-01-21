@@ -1,3 +1,4 @@
+import uuid
 import simpy
 import numpy as np
 import networkx as nx
@@ -5,6 +6,7 @@ import networkx as nx
 from enum import Enum
 from collections import Iterable
 from numbers import Number
+from collections import deque
 
 
 from util import Loggable
@@ -23,6 +25,11 @@ class Appliance(Loggable):
     self.__container_indices = {idx: c for idx, c in enumerate(self.containers)}
     self.__container_reverse_indices = {c.id: idx for idx, c in self.__container_indices.items()}
     self.__dag = self._create_dag()
+    self.__start_time, self.__end_time = 0, 0
+
+  @property
+  def env(self):
+    return self.__env
 
   @property
   def id(self):
@@ -33,12 +40,43 @@ class Appliance(Loggable):
     return list(self.__containers.values())
 
   @property
+  def avg_data_size(self):
+    return np.mean([c.output_nbytes for c in self.containers])
+
+  @property
   def dag(self):
     return nx.DiGraph(self.__dag)
 
   @property
+  def start_time(self):
+    return self.__start_time
+
+  @property
+  def end_time(self):
+    return self.__end_time
+
+  @start_time.setter
+  def start_time(self, st):
+    self.__start_time = st
+
+  @end_time.setter
+  def end_time(self, et):
+    self.__end_time = et
+
+  @property
   def is_finished(self):
     return all([s.state == ContainerState.FINISHED for s in self.get_sinks()])
+
+  @env.setter
+  def env(self, env):
+    assert isinstance(env, simpy.Environment)
+    self.__env = env
+
+  def clone(self):
+    return Appliance(self.__env, str(uuid.uuid4()),
+                     containers=[Container(self.__env, c.id, c.cpus, c.mem, c.disk, c.gpus,
+                                           c.runtime, c.output_nbytes, c.dependencies)
+                                 for c in self.containers])
 
   def get_container_by_id(self, id):
     return self.__containers.get(id)
@@ -73,6 +111,19 @@ class Appliance(Loggable):
   def get_sinks(self):
     return [self.__container_indices[n] for n in self.__dag.nodes
             if n in self.__container_indices and self.__dag.out_degree(n) == 0]
+
+  def estimate_local_runtime(self):
+    runtime, finished = 0, set()
+    deadlines = deque(sorted([(c.runtime, c) for c in self.get_sources()]))
+    while deadlines:
+      deadline, c = deadlines.popleft()
+      runtime = max(deadline, runtime)
+      finished.add(c.id)
+      qualified = deque([(runtime + s.runtime, s) for s in self.get_successors(c.id)
+                         if finished.issuperset([p.id for p in self.get_predecessors(s.id)])])
+      if qualified:
+        deadlines = deque(sorted(deadlines + qualified))
+    return runtime
 
   def visualize(self):
     import matplotlib.pyplot as plt
@@ -175,7 +226,7 @@ class Container(Loggable):
     self.__gpus = gpus
     assert isinstance(runtime, Number)
     self.__runtime = runtime
-    assert isinstance(output_nbytes, int)
+    assert isinstance(output_nbytes, Number)
     self.__output_nbytes = output_nbytes
     assert isinstance(dependencies, Iterable) and all([isinstance(d, str)for d in dependencies])
     self.__dependencies = list(dependencies)
@@ -205,6 +256,10 @@ class Container(Loggable):
   @property
   def gpus(self):
     return self.__gpus
+
+  @property
+  def state(self):
+    return self.__state
 
   @property
   def runtime(self):

@@ -5,8 +5,8 @@ import numpy as np
 from collections import defaultdict, Counter
 
 from appliance import Container
-from resource import Cluster, Host
-from resource.network import Packet, NetworkRoute
+from resources import Cluster, Host
+from resources.network import Packet, NetworkRoute
 from util import Loggable
 
 
@@ -65,7 +65,7 @@ class TestRandomClusterGenerator(unittest.TestCase):
   def setUp(self):
     env = simpy.Environment()
     dispatch_q, notify_q = simpy.Store(env), simpy.Store(env)
-    from resource.gen import RandomClusterGenerator
+    from resources.gen import RandomClusterGenerator
     self.gen = RandomClusterGenerator(env, dispatch_q, notify_q,
                                       cpus_lo=1, cpus_hi=16,
                                       mem_lo=1024 * 4, mem_hi=1024 * 16,

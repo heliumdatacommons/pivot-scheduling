@@ -1,34 +1,59 @@
 import simpy
-import inspect
-import bisect as bi
 import numpy as np
 import numpy.random as rnd
 
 import appliance
-import resource
+import resources
 
 from collections import Iterable, OrderedDict, defaultdict
 
+from resources.meter import Meter
 from util import Loggable
 
 
-class GlobalScheduler(Loggable):
+class GlobalSchedulerBase(Loggable):
 
-  def __init__(self, env, dispatch_q, notify_q, cluster):
+  def __init__(self, env, cluster, interval=5, seed=None, meter=None, *args, **kwargs):
     assert isinstance(env, simpy.Environment)
     self.__env = env
-    assert isinstance(dispatch_q, simpy.Store)
-    self.__dispatch_q = dispatch_q
-    assert isinstance(notify_q, simpy.Store)
-    self.__notify_q = notify_q
-    assert isinstance(cluster, resource.Cluster)
+    assert isinstance(cluster.dispatch_q, simpy.Store)
+    self.__dispatch_q = cluster.dispatch_q
+    assert isinstance(cluster.notify_q, simpy.Store)
+    self.__notify_q = cluster.notify_q
+    assert isinstance(cluster, resources.Cluster)
     self.__cluster = cluster
+    assert isinstance(interval, int)
+    self.__interval = interval
     self.__local_schedulers = {}
+    self.__resource_info = {}
+    self.__submit_q = simpy.Store(env)
+    self.__wait_q = OrderedDict()
+    self.__randomizer = rnd.RandomState(seed)
+    assert isinstance(meter, Meter)
+    self.__meter = meter
+
+  @property
+  def env(self):
+    return self.__env
+
+  @property
+  def cluster(self):
+    return self.__cluster
+
+  @property
+  def resource_info(self):
+    return dict(self.__resource_info)
+
+  @property
+  def randomizer(self):
+    return self.__randomizer
 
   def start(self):
-    self.__env.process(self._listen())
+    env = self.__env
+    env.process(self._dispatch())
+    env.process(self._listen())
 
-  def submit(self, app, sched_class, **kwargs):
+  def submit(self, app):
     """
 
     :param app: app.Appliance
@@ -36,50 +61,100 @@ class GlobalScheduler(Loggable):
 
     """
     assert isinstance(app, appliance.Appliance)
-    assert inspect.isclass(sched_class)
     if app.id in self.__local_schedulers:
       self.logger.error('Appliance %s already exists'%app.id)
       return
-    for kw in ('env', 'dispatch_q', ):
-      kwargs.pop(kw, None)
-    scheduler = sched_class(self.__env, app, self.__dispatch_q, self.__cluster, **kwargs)
+    scheduler = LocalScheduler(self.__env, app, self.__cluster, self.__submit_q)
     self.__local_schedulers[app.id] = scheduler
     self.__env.process(scheduler.start())
 
   def get_scheduler(self, app_id):
     return self.__local_schedulers.get(app_id)
 
+  def schedule(self, containers):
+    raise NotImplemented
+
+  def _update_resource_info(self):
+    self.__resource_info = {h.id: dict(cpus=h.resource.cpus_available,
+                                       mem=h.resource.mem_available,
+                                       disk=h.resource.disk_available,
+                                       gpus=h.resource.gpus_available)
+                            for h in self.cluster.hosts}
+
+  def _dispatch(self):
+    env, dispatch_q, interval = self.__env, self.__dispatch_q, self.__interval
+    submit_q, wait_q = self.__submit_q, self.__wait_q
+    meter = self.__meter
+    while any([not lc.appliance.is_finished for lc in self.__local_schedulers.values()]):
+      ready_q = []
+      while wait_q:
+        c, _ = wait_q.popitem()
+        ready_q += c,
+      n_items = len(submit_q.items)
+      while len(ready_q) < n_items:
+        c = yield submit_q.get()
+        ready_q += c,
+      self._update_resource_info()
+      if meter:
+        meter.increment_scheduling_ops(len(ready_q))
+      for c in self.schedule(ready_q):
+        if c.is_nascent:
+          if c.placement is None:
+            self.logger.debug('[%.3f] Container %s is put into the waiting queue' % (env.now, c.id))
+            self.logger.debug('Demand: %.1f cpus, %.1f mem, %.1f disk, %.1f gpus' % (c.cpus, c.mem, c.disk, c.gpus))
+            wait_q[c] = c
+            if meter:
+              meter.add_scheduling_turnover(env.now)
+          else:
+            self.logger.debug('[%.3f] Container %s is placed on host %s'%(env.now, c.id, c.placement))
+            self.logger.debug('[%d] Dispatched container %s, runtime: %.3f'%(env.now, c.id, c.runtime))
+            yield dispatch_q.put(c)
+            c.set_submitted()
+        else:
+          self.logger.error('[%d] Container state is not nascent: %s'%(env.now, c.id))
+      yield env.timeout(interval)
+
   def _listen(self):
-    while True:
+    local_schedulers = self.__local_schedulers
+    while any([not lc.appliance.is_finished for lc in self.__local_schedulers.values()]):
       success, c = yield self.__notify_q.get()
       self.logger.debug('[%.3f] Container %s finished: %s'%(self.__env.now, c.id, success))
       if not c.appliance:
         self.logger.error('Appliance of container %s is not set'%c.id)
         continue
-      local_sched = self.__local_schedulers.get(c.appliance.id)
-      if not local_sched:
+      local_sched = local_schedulers.get(c.appliance.id)
+      if local_sched is None:
         self.logger.error('Appliance %s does not exist'%c.appliance.id)
         continue
-      local_sched.notify(success, c)
+      if success:
+        c.set_finished()
+        local_sched.notify(c)
+      else:
+        c.set_nascent()
+        c.placement = None
+        yield self.__submit_q.put(c)
       if c.appliance.is_finished:
-        self.__local_schedulers.pop(c.appliance.id, None)
+        app = c.appliance
+        app.end_time = self.__env.now
+        self.logger.debug('Appliance end time: %d'%app.end_time)
+        self.logger.info('Appliance %s finished in %.3f seconds'%(app.id, app.end_time - app.start_time))
+        local_schedulers.pop(app, None)
 
 
-class LocalSchedulerBase(Loggable):
+class LocalScheduler(Loggable):
 
-  def __init__(self, env, app, dispatch_q, cluster, schedule_interval=5, *args, **kwargs):
+  def __init__(self, env, app, cluster, submit_q, interval=5):
     assert isinstance(env, simpy.Environment)
     self.__env = env
     assert isinstance(app, appliance.Appliance)
     self.__appliance = app
-    assert isinstance(dispatch_q, simpy.Store)
-    self.__dispatch_q = dispatch_q
-    assert isinstance(cluster, resource.Cluster)
+    assert isinstance(cluster, resources.Cluster)
     self.__cluster = cluster
+    assert isinstance(submit_q, simpy.Store)
+    self.__submit_q = submit_q
     self.__resource_info = {}
-    self.__schedule_interval = schedule_interval
+    self.__interval = interval
     self.__ready_q = OrderedDict()
-    self.__wait_q = OrderedDict()
 
   @property
   def env(self):
@@ -98,21 +173,19 @@ class LocalSchedulerBase(Loggable):
     return dict(self.__resource_info)
 
   @property
-  def schedule_interval(self):
-    return self.__schedule_interval
+  def interval(self):
+    return self.__interval
 
   def start(self):
-    env = self.__env
+    env, app = self.__env, self.appliance
     self.init()
-    while not self.appliance.is_finished:
+    while not app.is_finished:
       while len(self.__ready_q) > 0:
         _, c = self.__ready_q.popitem()
         if c.is_nascent:
-          self.logger.debug(
-            '[%d] Dispatched container %s, runtime: %.3f'%(self.__env.now, c.id, c.runtime))
-          yield self.__dispatch_q.put(c)
-          c.set_submitted()
-      yield env.timeout(self.__schedule_interval)
+          # self.logger.debug('[%d] Submit %s to the global scheduler'%(env.now, c.id))
+          yield self.__submit_q.put(c)
+      yield env.timeout(self.__interval)
 
   def update_resource_info(self):
     self.__resource_info = {h.id: dict(cpus=h.resource.cpus_available,
@@ -123,182 +196,164 @@ class LocalSchedulerBase(Loggable):
 
   def add_to_ready_queue(self, c):
     assert isinstance(c, appliance.Container)
-    assert c.placement is not None
-    self.__ready_q[c.id] = c
-
-  def add_to_wait_queue(self, c):
-    assert isinstance(c, appliance.Container)
-    assert c.placement is None
-    self.__wait_q[c.id] = c
-
-  def clear_wait_queue(self):
-    wait_q = list(self.__wait_q.values())
-    self.__wait_q.clear()
-    return wait_q
+    self.__ready_q[c] = c
 
   def init(self):
-    raise NotImplemented
+    app = self.appliance
+    app.start_time = self.env.now
+    self.logger.debug('Appliance start time: %d'%app.start_time)
+    for c in app.get_sources():
+      self.add_to_ready_queue(c)
 
-  def notify(self, success, c):
-    """
-
-    :param success:
-    :param c:
-    :return:
-    """
-    assert isinstance(success, bool)
-    assert isinstance(c, appliance.Container)
-
-  def schedule(self, containers):
-    """
-
-    :param containers: a sequence of appliance.Container
-    :return: a sequence of containers with placement
-    """
-    assert isinstance(containers, Iterable)
-    assert all([isinstance(c, appliance.Container) for c in containers])
-
-  def allocate_resource(self, contr, host):
-    resc = self.resource_info
-    hid = host.id
-    contr.placement = hid
-    resc[hid].update(cpus=resc[hid]['cpus'] - contr.cpus,
-                     mem=resc[hid]['mem'] - contr.mem,
-                     disk=resc[hid]['disk'] - contr.disk,
-                     gpus=resc[hid]['gpus'] - contr.gpus)
-
-
-class OpportunisticLocalScheduler(LocalSchedulerBase):
-
-  def __init__(self, *args, **kwargs):
-    super(OpportunisticLocalScheduler, self).__init__(*args, **kwargs)
-
-  def init(self):
-    self.schedule(self.appliance.get_sources())
-
-  def notify(self, success, c):
-    """
-
-    :param success:
-    :param c:
-    :return:
-    """
-    assert isinstance(success, bool)
+  def notify(self, c):
     assert isinstance(c, appliance.Container)
     app, env = self.appliance, self.env
-    if success:
-      c.set_finished()
-    else:
-      c.set_nascent()
-      c.placement = None
-    containers = self.clear_wait_queue() + (app.get_ready_successors(c.id) if success else [c])
+    containers = app.get_ready_successors(c.id) if c.is_finished else [c]
     self.logger.debug('[%.3f] local scheduler gets notified, next batch of containers: %s'%(env.now, containers))
-    self.schedule(containers)
-
-  def schedule(self, containers):
-    """
-
-    :param containers: a sequence of appliance.Container
-    """
-    super(OpportunisticLocalScheduler, self).schedule(containers)
-    env = self.env
-    self.update_resource_info()
     for c in containers:
-      host = self._select_hosts(c)
-      if host is None:
-        h = self.cluster.hosts[0].resource
-        self.logger.debug('[%.3f] Container %s is put into the waiting queue'%(env.now, c.id))
-        self.logger.debug('Demand: %.1f cpus, %.1f mem, %.1f disk, %.1f gpus'%(c.cpus, c.mem, c.disk, c.gpus))
-        self.logger.debug('Available: %.1f cpus, %.1f mem, %.1f disk, %.1f gpus'%(h.cpus_available,
-                                                                                 h.mem_available,
-                                                                                 h.disk_available,
-                                                                                 h.gpus_available))
-        self.add_to_wait_queue(c)
-      else:
-        self.logger.debug('[%.3f] Container %s is placed on host %s'%(env.now, c.id, host.id))
-        self.allocate_resource(c, host)
-        self.add_to_ready_queue(c)
-
-  def _select_hosts(self, c):
-    resc = self.resource_info
-    qualified = [hid for hid, r in resc.items()
-                 if r['cpus'] >= c.cpus and r['mem'] >= c.mem
-                 and r['disk'] >= c.disk and r['gpus'] >= c.gpus]
-    if not qualified:
-      return None
-    return self.cluster.get_host(rnd.choice(qualified))
+      self.add_to_ready_queue(c)
 
 
-class CostAwareLocalScheduler(LocalSchedulerBase):
-
+class OpportunisticGlobalScheduler(GlobalSchedulerBase):
 
   def __init__(self, *args, **kwargs):
-    epsilon = kwargs.pop('epsilon')
-    super(CostAwareLocalScheduler, self).__init__(*args, **kwargs)
-    self.__epsilon = epsilon
-
-  def init(self):
-    self.schedule(self.appliance.get_sources())
-
-  def notify(self, success, c):
-    assert isinstance(success, bool)
-    assert isinstance(c, appliance.Container)
-    app, env = self.appliance, self.env
-    if success:
-      c.set_finished()
-    else:
-      c.set_nascent()
-      c.placement = None
-    containers = self.clear_wait_queue() + (app.get_ready_successors(c.id) if c.is_finished else [c])
-    self.logger.debug('[%.3f] local scheduler gets notified, next batch of containers: %s'%(env.now, containers))
-    self.schedule(containers)
+    super(OpportunisticGlobalScheduler, self).__init__(*args, **kwargs)
 
   def schedule(self, containers):
-    self.update_resource_info()
-    env = self.env
-    meta = self.cluster.meta
+    assert isinstance(containers, Iterable) and all([isinstance(c, appliance.Container) for c in containers])
+    resc = self.resource_info
+    for c in containers:
+      qualified = [hid for hid, r in resc.items()
+                   if r['cpus'] >= c.cpus and r['mem'] >= c.mem and r['disk'] >= c.disk and r['gpus'] >= c.gpus]
+      if len(qualified) > 0:
+        h = self.cluster.get_host(self.randomizer.choice(qualified))
+        r = resc[h.id]
+        c.placement = h.id
+        r['cpus'] -= c.cpus
+        r['mem'] -= c.mem
+        r['disk'] -= c.disk
+        r['gpus'] -= c.gpus
+    return list(containers)
+
+
+class FirstFitGlobalScheduler(GlobalSchedulerBase):
+
+  def __init__(self, *args, **kwargs):
+    decreasing = str(kwargs.pop('decreasing', False))
+    super(FirstFitGlobalScheduler, self).__init__(*args, **kwargs)
+    self.__decreasing = decreasing
+
+  def schedule(self, containers):
+    env, hosts = self.env, self.cluster.hosts
+    resc = self.resource_info
+    if self.__decreasing:
+      containers = self._sort_containers(containers)
+    for c in containers:
+      for h in hosts:
+        r = resc[h.id]
+        if r['cpus'] >= c.cpus and r['mem'] >= c.mem and r['disk'] >= c.disk and r['gpus'] >= c.gpus:
+          c.placement = h.id
+          r['cpus'] -= c.cpus
+          r['mem'] -= c.mem
+          r['disk'] -= c.disk
+          r['gpus'] -= c.gpus
+          break
+    return containers
+
+  def _sort_containers(self, contrs):
+    def container_score_func(c):
+      assert isinstance(c, appliance.Container)
+      return -self._calc_euclidean_dist(c.cpus, c.mem, c.disk, c.gpus)
+
+    return sorted(contrs, key=container_score_func)
+
+  def _calc_euclidean_dist(self, h_cpus, h_mem, h_disk, h_gpus,
+                           c_cpus=0, c_mem=0, c_disk=0, c_gpus=0):
+    return np.sqrt((h_cpus - c_cpus) ** 2 + (h_mem - c_mem) ** 2 + (h_disk - c_disk) ** 2 + (h_gpus - c_gpus) ** 2)
+
+
+class BestFitGlobalScheduler(GlobalSchedulerBase):
+
+  def __init__(self, *args, **kwargs):
+    decreasing = str(kwargs.pop('decreasing', False))
+    super(BestFitGlobalScheduler, self).__init__(*args, **kwargs)
+    self.__decreasing = decreasing
+
+  def schedule(self, containers):
+    resc, calc_dist = self.resource_info, self._calc_euclidean_dist
+    if self.__decreasing:
+      containers = self._sort_containers(containers)
+    for c in containers:
+      qualified = [(hid, r) for hid, r in resc.items()
+                   if r['cpus'] >= c.cpus and r['mem'] >= c.mem and r['disk'] >= c.disk and r['gpus'] >= c.gpus]
+      if qualified:
+        _, hid, r = min([(calc_dist(r['cpus'], r['mem'], r['disk'], r['gpus'], c.cpus, c.mem, c.disk, c.gpus),
+                          hid, r) for hid, r in qualified])
+        c.placement = hid
+        r['cpus'] -= c.cpus
+        r['mem'] -= c.mem
+        r['disk'] -= c.disk
+        r['gpus'] -= c.gpus
+    return containers
+
+  def _sort_containers(self, contrs):
+    def container_score_func(c):
+      assert isinstance(c, appliance.Container)
+      return -self._calc_euclidean_dist(c.cpus, c.mem, c.disk, c.gpus)
+
+    return sorted(contrs, key=container_score_func)
+
+  def _calc_euclidean_dist(self, h_cpus, h_mem, h_disk, h_gpus,
+                           c_cpus=0, c_mem=0, c_disk=0, c_gpus=0):
+    return np.sqrt((h_cpus - c_cpus) ** 2 + (h_mem - c_mem) ** 2 + (h_disk - c_disk) ** 2 + (h_gpus - c_gpus) ** 2)
+
+
+class CostAwareGlobalScheduler(GlobalSchedulerBase):
+
+  def __init__(self, *args, **kwargs):
+    bin_pack_algo = str(kwargs.pop('bin_pack_algo', 'first-fit'))
+    sort_containers = bool(kwargs.pop('sort_containers', False))
+    sort_hosts = bool(kwargs.pop('sort_hosts', False))
+    realtime_bw = kwargs.pop('realtime_bw',False)
+    host_decay = kwargs.pop('host_decay', False)
+    super(CostAwareGlobalScheduler, self).__init__(*args, **kwargs)
+    self.__bin_pack_algo = bin_pack_algo
+    self.__sort_containers = sort_containers
+    self.__sort_hosts = sort_hosts
+    self.__realtime_bw = realtime_bw
+    self.__host_decay = host_decay
+    self.__last_locality = None
+
+  def schedule(self, containers):
+    bin_pack_algo = self.__bin_pack_algo
+    if bin_pack_algo == 'first-fit':
+      bin_pack_algo = self._first_fit
+    elif bin_pack_algo == 'best-fit':
+      bin_pack_algo = self._best_fit
+    env, storage, hosts = self.env, self.cluster.storage, self.cluster.hosts
     groups = self._group_containers(containers)
-    for base, contrs in groups.items():
-      if not base:
-        base = rnd.choice(meta.zones)
-      # hosts = self._sort_hosts(self.cluster.hosts, base)
-      contrs = self._sort_containers(contrs)
-      for c, h in self._first_fit(self.cluster.hosts, contrs, base):
-        if h is None:
-          self.logger.debug('[%.3f] Container %s is put into the waiting queue'%(env.now, c.id))
-          self.logger.debug('Demand: %.1f cpus, %.1f mem, %.1f disk, %.1f gpus'%(c.cpus, c.mem, c.disk, c.gpus))
-          self.add_to_wait_queue(c)
-        else:
-          self.logger.debug('[%.3f] Container %s is placed on host %s'%(env.now, c.id, h.id))
-          self.allocate_resource(c, h)
-          self.add_to_ready_queue(c)
+    for anchor, contrs in groups.items():
+      if isinstance(anchor, appliance.Appliance):
+        anchor = self.randomizer.choice(storage)
+      if self.__sort_containers:
+        contrs = self._sort_containers(contrs)
+      bin_pack_algo(hosts, contrs, anchor)
+    return containers
 
   def _group_containers(self, contrs):
-    cluster, app = self.cluster, self.appliance
+    cluster = self.cluster
     groups = defaultdict(list)
     for c in contrs:
-      preds = app.get_predecessors(c.id)
+      app = c.appliance
+      preds = c.appliance.get_predecessors(c.id)
       if preds:
-        placement = rnd.choice(preds).placement
-        zone = cluster.get_host(placement).locality
-        groups[zone] += c,
+        placement = self.randomizer.choice(preds).placement
+        locality = cluster.get_host(placement).locality
+        data_src = cluster.get_storage_by_locality(locality)
+        groups[data_src] += c,
       else:
-        groups[None] += c,
+        groups[app] += c,
     return groups
-
-  def _sort_hosts(self, hosts, base):
-    resc, meta = self.resource_info, self.cluster.meta
-
-    def host_score_func(h):
-      assert isinstance(h, resource.Host)
-      r = self._calc_euclidean_dist(resc[h.id]['cpus'], resc[h.id]['mem'],
-                                    resc[h.id]['disk'], resc[h.id]['gpus'])
-      bw = meta.bw[(base, h.locality)] + meta.bw[(h.locality, base)]
-
-      c = meta.cost[(base, h.locality)] + meta.cost[(h.locality, base)]
-      return c/(r * bw)
-
-    return sorted(hosts, key=host_score_func)
 
   def _sort_containers(self, contrs):
 
@@ -308,82 +363,83 @@ class CostAwareLocalScheduler(LocalSchedulerBase):
 
     return sorted(contrs, key=container_score_func)
 
-  def _first_fit(self, hosts, contrs, base):
-    resc, meta = self.resource_info, self.cluster.meta
+  def _best_fit(self, hosts, contrs, anchor):
+    env, resc, cluster, meta = self.env, self.resource_info, self.cluster, self.cluster.meta
+    host_decay, rt_bw = self.__host_decay, self.__realtime_bw
+
+    def host_score_func(item):
+      h, c = item
+      assert isinstance(h, resources.Host)
+      assert isinstance(c, appliance.Container)
+      r = self._calc_euclidean_dist(resc[h.id]['cpus'], resc[h.id]['mem'], resc[h.id]['disk'], resc[h.id]['gpus'],
+                                    c.cpus, c.mem, c.disk, c.gpus)
+      in_route = cluster.get_route(anchor.id, h.id)
+      out_route = cluster.get_route(h.id, anchor.id)
+      if round(in_route.bw, 3) != round(in_route.realtime_bw, 3):
+        self.logger.debug('bw: %.3f, rt bw: %.3f'%(in_route.bw, in_route.realtime_bw))
+      if round(out_route.bw, 3) != round(out_route.realtime_bw, 3):
+        self.logger.debug('bw: %.3f, rt bw: %.3f'%(out_route.bw, out_route.realtime_bw))
+      bw = (in_route.realtime_bw + out_route.realtime_bw) if rt_bw else (in_route.bw + out_route.bw)
+      c = meta.cost[(anchor.locality, h.locality)] + meta.cost[(h.locality, anchor.locality)]
+      decay = max(len(h.containers) if host_decay else 0, 1)
+
+      return c * r * decay/bw
+
+    for c in contrs:
+      candidates = [(h, c) for h in hosts
+                    if resc[h.id]['cpus'] >= c.cpus
+                    and resc[h.id]['mem'] >= c.mem
+                    and resc[h.id]['disk'] >= c.disk
+                    and resc[h.id]['gpus'] >= c.gpus]
+      if len(candidates) == 0:
+        self.logger.debug('[%.3f] Container %s is put into the waiting queue' % (env.now, c.id))
+        self.logger.debug('Demand: %.1f cpus, %.1f mem, %.1f disk, %.1f gpus' % (c.cpus, c.mem, c.disk, c.gpus))
+      else:
+        h, _ = min(candidates, key=host_score_func)
+        self.logger.debug('[%.3f] Container %s is placed on host %s' % (env.now, c.id, h.id))
+        c.placement = h.id
+        resc[h.id]['cpus'] -= c.cpus
+        resc[h.id]['mem'] -= c.mem
+        resc[h.id]['disk'] -= c.disk
+        resc[h.id]['gpus'] -= c.gpus
+
+  def _first_fit(self, hosts, contrs, data_src):
+    env, resc, cluster, meta = self.env, self.resource_info, self.cluster, self.cluster.meta
+    sort_hosts, rt_bw = self.__sort_hosts, self.__realtime_bw
+    host_decay = self.__host_decay
 
     def host_score_func(h):
-      assert isinstance(h, resource.Host)
-      r = self._calc_euclidean_dist(resc[h.id]['cpus'], resc[h.id]['mem'],
-                                    resc[h.id]['disk'], resc[h.id]['gpus'])
-      bw = meta.bw[(base, h.locality)] + meta.bw[(h.locality, base)]
+      assert isinstance(h, resources.Host)
+      h_resc = resc[h.id]
+      r = self._calc_euclidean_dist(h_resc['cpus'], h_resc['mem'], h_resc['disk'], h_resc['gpus'])
+      in_route = cluster.get_route(data_src.id, h.id)
+      out_route = cluster.get_route(h.id, data_src.id)
+      if round(in_route.bw, 3) != round(in_route.realtime_bw, 3):
+        self.logger.debug('bw: %.3f, rt bw: %.3f'%(in_route.bw, in_route.realtime_bw))
+      if round(out_route.bw, 3) != round(out_route.realtime_bw, 3):
+        self.logger.debug('bw: %.3f, rt bw: %.3f'%(out_route.bw, out_route.realtime_bw))
+      bw = (in_route.realtime_bw + out_route.realtime_bw) if rt_bw else (in_route.bw + out_route.bw)
 
-      c = meta.cost[(base, h.locality)] + meta.cost[(h.locality, base)]
-      return c * (placement_counter[h] + self.__epsilon)/(r * bw)
+      c = meta.cost[(data_src.locality, h.locality)] + meta.cost[(h.locality, data_src.locality)]
+      df = max(len(h.containers) if host_decay else 0, 1)
+      return c * df/(r * bw)
 
-    placements = []
-    placement_counter = defaultdict(int)
-    hosts = sorted(hosts, key=host_score_func)
-    scores = [host_score_func(h) for h in hosts]
-    last_idx = None
+    if sort_hosts:
+      hosts = sorted(hosts, key=host_score_func)
     for c in contrs:
-      placed = False
-      if last_idx is not None:
-        h, old_score = hosts.pop(last_idx), scores.pop(last_idx)
-        new_score = host_score_func(h)
-        pos = bi.bisect(scores, new_score)
-        scores.insert(pos, new_score)
-        hosts.insert(pos, h)
       for i, h in enumerate(hosts):
-        if resc[h.id]['cpus'] >= c.cpus \
-            and resc[h.id]['mem'] >= c.mem \
-            and resc[h.id]['disk'] >= c.disk \
-            and resc[h.id]['gpus'] >= c.gpus:
-          placements += (c, h),
-          placement_counter[h] += 1
-          last_idx = i
-          placed = True
-          self._subtract_resource_usage(h.id, c.cpus, c.mem, c.disk, c.gpus)
+        r = resc[h.id]
+        if r['cpus'] >= c.cpus and r['mem'] >= c.mem and r['disk'] >= c.disk and r['gpus'] >= c.gpus:
+          c.placement = h.id
+          r['cpus'] -= c.cpus
+          r['mem'] -= c.mem
+          r['disk'] -= c.disk
+          r['gpus'] -= c.gpus
           break
-      if not placed:
-        placements += (c, None),
-    return placements
-
-  def _best_fit(self, hosts, contrs):
-    euclidean_dist = self._calc_euclidean_dist
-    resc = self.resource_info
-    placements = []
-    for i, c in enumerate(contrs):
-      min_cap, min_host = np.iinfo(np.int32).max, 0
-      for j, h in enumerate(hosts):
-        diff = euclidean_dist(resc[h.id]['cpus'], resc[h.id]['mem'],
-                              resc[h.id]['disk'], resc[h.id]['gpus'],
-                              c.cpus, c.mem, c.disk, c.gpus)
-        if resc[h.id]['cpus'] >= c.cpus \
-            and resc[h.id]['mem'] >= c.mem \
-            and resc[h.id]['disk'] >= c.disk \
-            and resc[h.id]['gpus'] >= c.gpus \
-            and  diff < min_cap:
-          min_cap, min_host = diff, h
-      if min_cap == np.iinfo(np.int32).max:
-        placements += (c, None),
-      else:
-        placements += (c, h)
-        self._subtract_resource_usage(h.id, c.cpus, c.mem, c.disk, c.gpus)
-    return placements
 
   def _calc_euclidean_dist(self, h_cpus, h_mem, h_disk, h_gpus,
                            c_cpus=0, c_mem=0, c_disk=0, c_gpus=0):
-    return np.sqrt((h_cpus - c_cpus) ** 2
-                   + (h_mem - c_mem) ** 2
-                   + (h_disk - c_disk) ** 2
-                   + (h_gpus - c_gpus) ** 2)
-
-  def _subtract_resource_usage(self, hid, cpus, mem, disk, gpus):
-    resc = self.resource_info
-    resc[hid]['cpus'] -= cpus
-    resc[hid]['mem'] -= mem
-    resc[hid]['disk'] -= disk
-    resc[hid]['gpus'] -= gpus
+    return np.sqrt((h_cpus - c_cpus) ** 2 + (h_mem - c_mem) ** 2 + (h_disk - c_disk) ** 2 + (h_gpus - c_gpus) ** 2)
 
 
 

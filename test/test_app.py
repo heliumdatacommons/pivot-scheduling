@@ -1,7 +1,6 @@
 import simpy
 import unittest
 import networkx as nx
-import numpy as np
 import numpy.random as rnd
 
 from appliance import Container, Appliance
