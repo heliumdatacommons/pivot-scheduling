@@ -1,0 +1,414 @@
+locality:
+  aws:
+    us-east-1:
+      - a
+      - b
+      - c
+    us-east-2:
+      - a
+      - b
+      - c
+    us-west-1:
+      - b
+      - c
+    us-west-2:
+      - a
+      - b
+      - c
+    ca-central-1:
+      - a
+      - b
+  gcp:
+    us-east1:
+      - b
+      - c
+      - d
+    us-east4:
+      - a
+      - b
+      - c
+    us-west1:
+      - a
+      - b
+      - c
+    us-west2:
+      - a
+      - b
+      - c
+    us-central1:
+      - a
+      - b
+      - c
+    northamerica-northeast1:
+      - a
+      - b
+      - c
+meta:
+  aws_us-east-1--aws_us-east-1:
+    cost: 0
+    bw: 15000
+  aws_us-east-1--aws_us-east-2:
+    cost: 0.01
+    bw: 1120
+  aws_us-east-1--aws_us-west-1:
+    cost: 0.02
+    bw: 190
+  aws_us-east-1--aws_us-west-2:
+    cost: 0.02
+    bw: 150
+  aws_us-east-1--aws_ca-central-1:
+    cost: 0.02
+    bw: 760
+  aws_us-east-1--gcp_us-east1:
+    cost: 0.09
+    bw: 990
+  aws_us-east-1--gcp_us-east4:
+    cost: 0.09
+    bw: 690
+  aws_us-east-1--gcp_us-west1:
+    cost: 0.09
+    bw: 330
+  aws_us-east-1--gcp_us-west2:
+    cost: 0.09
+    bw: 320
+  aws_us-east-1--gcp_us-central1:
+    cost: 0.09
+    bw: 250
+  aws_us-east-1--gcp_northamerica-northeast1:
+    cost: 0.09
+    bw: 710
+  aws_us-east-2--aws_us-east-2:
+    cost: 0
+    bw: 15000
+  aws_us-east-2--aws_us-east-1:
+    cost: 0.01
+    bw: 290
+  aws_us-east-2--aws_us-west-1:
+    cost: 0.02
+    bw: 240
+  aws_us-east-2--aws_us-west-2:
+    cost: 0.02
+    bw: 180
+  aws_us-east-2--aws_ca-central-1:
+    cost: 0.02
+    bw: 510
+  aws_us-east-2--gcp_us-east1:
+    cost: 0.09
+    bw: 150
+  aws_us-east-2--gcp_us-east4:
+    cost: 0.09
+    bw: 200
+  aws_us-east-2--gcp_us-west1:
+    cost: 0.09
+    bw: 100
+  aws_us-east-2--gcp_us-west2:
+    cost: 0.09
+    bw: 300
+  aws_us-east-2--gcp_us-central1:
+    cost: 0.09
+    bw: 570
+  aws_us-east-2--gcp_northamerica-northeast1:
+    cost: 0.09
+    bw: 50
+  aws_us-west-1--aws_us-west-1:
+    cost: 0
+    bw: 15000
+  aws_us-west-1--aws_us-east-1:
+    cost: 0.02
+    bw: 110
+  aws_us-west-1--aws_us-east-2:
+    cost: 0.02
+    bw: 240
+  aws_us-west-1--aws_us-west-2:
+    cost: 0.02
+    bw: 550
+  aws_us-west-1--aws_ca-central-1:
+    cost: 0.02
+    bw: 120
+  aws_us-west-1--gcp_us-east1:
+    cost: 0.09
+    bw: 330
+  aws_us-west-1--gcp_us-east4:
+    cost: 0.09
+    bw: 380
+  aws_us-west-1--gcp_us-west1:
+    cost: 0.09
+    bw: 1200
+  aws_us-west-1--gcp_us-west2:
+    cost: 0.09
+    bw: 2200
+  aws_us-west-1--gcp_us-central1:
+    cost: 0.09
+    bw: 650
+  aws_us-west-1--gcp_northamerica-northeast1:
+    cost: 0.09
+    bw: 340
+  aws_us-west-2--aws_us-west-2:
+    cost: 0
+    bw: 15000
+  aws_us-west-2--aws_us-east-1:
+    cost: 0.02
+    bw: 150
+  aws_us-west-2--aws_us-east-2:
+    cost: 0.02
+    bw: 180
+  aws_us-west-2--aws_us-west-1:
+    cost: 0.02
+    bw: 510
+  aws_us-west-2--aws_ca-central-1:
+    cost: 0.02
+    bw: 190
+  aws_us-west-2--gcp_us-east1:
+    cost: 0.09
+    bw: 280
+  aws_us-west-2--gcp_us-east4:
+    cost: 0.09
+    bw: 340
+  aws_us-west-2--gcp_us-west1:
+    cost: 0.09
+    bw: 980
+  aws_us-west-2--gcp_us-west2:
+    cost: 0.09
+    bw: 600
+  aws_us-west-2--gcp_us-central1:
+    cost: 0.09
+    bw: 360
+  aws_us-west-2--gcp_northamerica-northeast1:
+    cost: 0.09
+    bw: 320
+  aws_ca-central-1--aws_ca-central-1:
+    cost: 0
+    bw: 15000
+  aws_ca-central-1--aws_us-east-1:
+    cost: 0.02
+    bw: 680
+  aws_ca-central-1--aws_us-east-2:
+    cost: 0.02
+    bw: 500
+  aws_ca-central-1--aws_us-west-1:
+    cost: 0.02
+    bw: 110
+  aws_ca-central-1--aws_us-west-2:
+    cost: 0.02
+    bw: 140
+  aws_ca-central-1--gcp_us-east1:
+    cost: 0.09
+    bw: 900
+  aws_ca-central-1--gcp_us-east4:
+    cost: 0.09
+    bw: 210
+  aws_ca-central-1--gcp_us-west1:
+    cost: 0.09
+    bw: 310
+  aws_ca-central-1--gcp_us-west2:
+    cost: 0.09
+    bw: 80
+  aws_ca-central-1--gcp_us-central1:
+    cost: 0.09
+    bw: 830
+  aws_ca-central-1--gcp_northamerica-northeast1:
+    cost: 0.09
+    bw: 4550
+  gcp_us-east1--gcp_us-east1:
+    cost: 0
+    bw: 15000
+  gcp_us-east1--gcp_us-east4:
+    cost: 0.01
+    bw: 950
+  gcp_us-east1--gcp_us-west1:
+    cost: 0.01
+    bw: 320
+  gcp_us-east1--gcp_us-west2:
+    cost: 0.01
+    bw: 370
+  gcp_us-east1--gcp_us-central1:
+    cost: 0.01
+    bw: 650
+  gcp_us-east1--gcp_northamerica-northeast1:
+    cost: 0.01
+    bw: 570
+  gcp_us-east1--aws_us-east-1:
+    cost: 0.09
+    bw: 980
+  gcp_us-east1--aws_us-east-2:
+    cost: 0.09
+    bw: 530
+  gcp_us-east1--aws_us-west-1:
+    cost: 0.09
+    bw: 170
+  gcp_us-east1--aws_us-west-2:
+    cost: 0.09
+    bw: 150
+  gcp_us-east1--aws_ca-central-1:
+    cost: 0.09
+    bw: 470
+  gcp_us-east4--gcp_us-east4:
+    cost: 0
+    bw: 15000
+  gcp_us-east4--gcp_us-east1:
+    cost: 0.01
+    bw: 1860
+  gcp_us-east4--gcp_us-west1:
+    cost: 0.01
+    bw: 290
+  gcp_us-east4--gcp_us-west2:
+    cost: 0.01
+    bw: 130
+  gcp_us-east4--gcp_us-central1:
+    cost: 0.01
+    bw: 960
+  gcp_us-east4--gcp_northamerica-northeast1:
+    cost: 0.01
+    bw: 1130
+  gcp_us-east4--aws_us-east-1:
+    cost: 0.11
+    bw: 1900
+  gcp_us-east4--aws_us-east-2:
+    cost: 0.11
+    bw: 400
+  gcp_us-east4--aws_us-west-1:
+    cost: 0.11
+    bw: 200
+  gcp_us-east4--aws_us-west-2:
+    cost: 0.11
+    bw: 90
+  gcp_us-east4--aws_ca-central-1:
+    cost: 0.11
+    bw: 860
+  gcp_us-west1--gcp_us-west1:
+    cost: 0
+    bw: 15000
+  gcp_us-west1--gcp_us-east1:
+    cost: 0.01
+    bw: 350
+  gcp_us-west1--gcp_us-east4:
+    cost: 0.01
+    bw: 150
+  gcp_us-west1--gcp_us-west2:
+    cost: 0.01
+    bw: 650
+  gcp_us-west1--gcp_us-central1:
+    cost: 0.01
+    bw: 630
+  gcp_us-west1--gcp_northamerica-northeast1:
+    cost: 0.01
+    bw: 130
+  gcp_us-west1--aws_us-east-1:
+    cost: 0.11
+    bw: 180
+  gcp_us-west1--aws_us-east-2:
+    cost: 0.11
+    bw: 180
+  gcp_us-west1--aws_us-west-1:
+    cost: 0.11
+    bw: 650
+  gcp_us-west1--aws_us-west-2:
+    cost: 0.11
+    bw: 880
+  gcp_us-west1--aws_ca-central-1:
+    cost: 0.11
+    bw: 160
+  gcp_us-west2--gcp_us-west2:
+    cost: 0
+    bw: 15000
+  gcp_us-west2--gcp_us-east1:
+    cost: 0.01
+    bw: 370
+  gcp_us-west2--gcp_us-east4:
+    cost: 0.01
+    bw: 110
+  gcp_us-west2--gcp_us-west1:
+    cost: 0.01
+    bw: 600
+  gcp_us-west2--gcp_us-central1:
+    cost: 0.01
+    bw: 650
+  gcp_us-west2--gcp_northamerica-northeast1:
+    cost: 0.01
+    bw: 120
+  gcp_us-west2--aws_us-east-1:
+    cost: 0.11
+    bw: 200
+  gcp_us-west2--aws_us-east-2:
+    cost: 0.11
+    bw: 190
+  gcp_us-west2--aws_us-west-1:
+    cost: 0.11
+    bw: 1300
+  gcp_us-west2--aws_us-west-2:
+    cost: 0.11
+    bw: 460
+  gcp_us-west2--aws_ca-central-1:
+    cost: 0.11
+    bw: 170
+  gcp_us-central1--gcp_us-central1:
+    cost: 0
+    bw: 15000
+  gcp_us-central1--gcp_us-east1:
+    cost: 0.01
+    bw: 650
+  gcp_us-central1--gcp_us-east4:
+    cost: 0.01
+    bw: 960
+  gcp_us-central1--gcp_us-west1:
+    cost: 0.01
+    bw: 610
+  gcp_us-central1--gcp_us-west2:
+    cost: 0.01
+    bw: 170
+  gcp_us-central1--gcp_northamerica-northeast1:
+    cost: 0.01
+    bw: 240
+  gcp_us-central1--aws_us-east-1:
+    cost: 0.11
+    bw: 354
+  gcp_us-central1--aws_us-east-2:
+    cost: 0.11
+    bw: 600
+  gcp_us-central1--aws_us-west-1:
+    cost: 0.11
+    bw: 330
+  gcp_us-central1--aws_us-west-2:
+    cost: 0.11
+    bw: 240
+  gcp_us-central1--aws_ca-central-1:
+    cost: 0.11
+    bw: 460
+  gcp_northamerica-northeast1--gcp_northamerica-northeast1:
+    cost: 0
+    bw: 15000
+  gcp_northamerica-northeast1--gcp_us-east1:
+    cost: 0.01
+    bw: 910
+  gcp_northamerica-northeast1--gcp_us-east4:
+    cost: 0.01
+    bw: 1280
+  gcp_northamerica-northeast1--gcp_us-west1:
+    cost: 0.01
+    bw: 170
+  gcp_northamerica-northeast1--gcp_us-west2:
+    cost: 0.01
+    bw: 100
+  gcp_northamerica-northeast1--gcp_us-central1:
+    cost: 0.01
+    bw: 750
+  gcp_northamerica-northeast1--aws_us-east-1:
+    cost: 0.11
+    bw: 420
+  gcp_northamerica-northeast1--aws_us-east-2:
+    cost: 0.11
+    bw: 460
+  gcp_northamerica-northeast1--aws_us-west-1:
+    cost: 0.11
+    bw: 180
+  gcp_northamerica-northeast1--aws_us-west-2:
+    cost: 0.11
+    bw: 180
+  gcp_northamerica-northeast1--aws_ca-central-1:
+    cost: 0.11
+    bw: 3700
+  
+
+
+
+

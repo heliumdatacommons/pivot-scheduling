@@ -5,7 +5,7 @@ import numpy.random as rnd
 
 from collections import deque, defaultdict
 
-from appliance import Appliance, Container, Dataflow
+from application import Application, Container, Dataflow
 from util import Loggable
 
 
@@ -65,7 +65,7 @@ class RandomDAGGenerator(Loggable):
 #     return dataflows
 
 
-class RandomApplianceGenerator(Loggable):
+class RandomApplicationGenerator(Loggable):
 
   def __init__(self, env, n_nodes_lo, n_nodes_hi, edge_den_lo, edge_den_hi,
                cpus_lo, cpus_hi, mem_lo, mem_hi, disk_lo, disk_hi, gpus_lo, gpus_hi,
@@ -101,12 +101,12 @@ class RandomApplianceGenerator(Loggable):
                                                           self.__output_nbytes_hi))
     for u, v in dag.edges:
       containers[v].add_dependencies(str(u))
-    app = Appliance(self.__env, str(uuid.uuid4()), containers.values())
+    app = Application(self.__env, str(uuid.uuid4()), containers.values())
     # app.visualize()
     return app
 
 
-class SequentialApplianceGenerator(Loggable):
+class SequentialApplicationGenerator(Loggable):
 
   def __init__(self, env, n_nodes_lo, n_nodes_hi,
                cpus_lo, cpus_hi, mem_lo, mem_hi, disk_lo, disk_hi, gpus_lo, gpus_hi,
@@ -142,7 +142,7 @@ class SequentialApplianceGenerator(Loggable):
                                                           self.__output_nbytes_hi))
     for u, v in dag.edges:
       containers[v].add_dependencies(str(u))
-    app = Appliance(self.__env, str(uuid.uuid4()), containers.values())
+    app = Application(self.__env, str(uuid.uuid4()), containers.values())
     app.visualize()
     return app
 
@@ -151,7 +151,7 @@ class SequentialApplianceGenerator(Loggable):
     return nx.DiGraph([(i - 1, i) for i in range(1, n_nodes)])
 
 
-class DataParallelApplianceGenerator(Loggable):
+class DataParallelApplicationGenerator(Loggable):
 
   def __init__(self, env, min_cpus, max_cpus, min_mem, max_mem, min_disk, max_disk,
                min_gpus, max_gpus, min_seq_steps, max_seq_steps,
@@ -219,7 +219,7 @@ class DataParallelApplianceGenerator(Loggable):
           containers += c,
         last_step = [str(i) for i in range(n_nodes + 1, n_nodes + parallel_level + 1)]
         n_nodes += parallel_level
-    app = Appliance(self.__env, str(uuid.uuid4()), containers)
+    app = Application(self.__env, str(uuid.uuid4()), containers)
     # app.visualize()
     return app
 

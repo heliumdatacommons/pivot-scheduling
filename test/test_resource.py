@@ -4,7 +4,7 @@ import numpy as np
 
 from collections import defaultdict, Counter
 
-from appliance import Container
+from application import Container
 from resources import Cluster, Host
 from resources.network import Packet, NetworkRoute
 from util import Loggable

@@ -12,7 +12,7 @@ from collections import deque
 from util import Loggable
 
 
-class Appliance(Loggable):
+class Application(Loggable):
 
   def __init__(self, env, id, containers=[]):
     assert isinstance(env, simpy.Environment)
@@ -21,7 +21,7 @@ class Appliance(Loggable):
     self.__env = env
     self.__containers = {c.id: c for c in containers}
     for c in containers:
-      c.appliance = self
+      c.application = self
     self.__container_indices = {idx: c for idx, c in enumerate(self.containers)}
     self.__container_reverse_indices = {c.id: idx for idx, c in self.__container_indices.items()}
     self.__dag = self._create_dag()
@@ -65,7 +65,7 @@ class Appliance(Loggable):
 
   @property
   def is_finished(self):
-    return all([s.state == ContainerState.FINISHED for s in self.get_sinks()])
+    return all([s.is_finished for s in self.get_sinks()])
 
   @env.setter
   def env(self, env):
@@ -73,9 +73,9 @@ class Appliance(Loggable):
     self.__env = env
 
   def clone(self):
-    return Appliance(self.__env, str(uuid.uuid4()),
-                     containers=[Container(self.__env, c.id, c.cpus, c.mem, c.disk, c.gpus,
-                                           c.runtime, c.output_nbytes, c.dependencies)
+    return Application(self.__env, str(uuid.uuid4()),
+                       containers=[Container(self.__env, c.id, c.cpus, c.mem, c.disk, c.gpus,
+                                           c.runtime, c.output_nbytes, c.instances, c.dependencies)
                                  for c in self.containers])
 
   def get_container_by_id(self, id):
@@ -99,7 +99,7 @@ class Appliance(Loggable):
             if s_idx in self.__container_indices]
 
   def get_unfinished_predecessors(self, id):
-    return [p for p in self.get_predecessors(id) if p.state != ContainerState.FINISHED]
+    return [p for p in self.get_predecessors(id) if not p.is_finished]
 
   def get_ready_successors(self, id):
     return [s for s in self.get_successors(id) if len(self.get_unfinished_predecessors(s.id)) == 0]
@@ -129,55 +129,22 @@ class Appliance(Loggable):
     import matplotlib.pyplot as plt
     nx.draw(self.dag)
     plt.show()
-    # dag = self.dag
-    # level = set([n for n in dag.nodes if dag.in_degree(n) == 0])
-    # max_depth, max_width = 0, 0
-    # shown = set()
-    # res = []
-    # while level:
-    #   max_width = max(max_width, len(level))
-    #   shown |= level
-    #   res += level,
-    #   new_level = set()
-    #   for n in level:
-    #     new_level.update([s for s in dag.successors(n) if set(dag.predecessors(s)).issubset(shown)])
-    #   max_depth += 1
-    #   level = new_level
-    #
-    # _, ax = plt.subplots()
-    # ax.set_xlim(0, 1.25)
-    # ax.set_ylim(0, 1.25)
-    # radius = 1/(8 * max(max_depth, max_width))
-    # pos_map = {}
-    # for depth, row in enumerate(res):
-    #   print(list(row))
-    #   for i, n in enumerate(row):
-    #     pos = (depth * 1/max_depth + radius, i * 1/max_width + radius)
-    #     pos_map[n] = pos
-    #     c = plt.Circle(pos, radius)
-    #     ax.add_artist(c)
-    #     print(n, list(dag.predecessors(n)))
-    #     for pre in dag.predecessors(n):
-    #       cur_x, cur_y = pos
-    #       pre_x, pre_y = pos_map[pre]
-    #       ax.arrow(pre_x + radius, pre_y + radius,
-    #                cur_x - radius, cur_y - radius,
-    #                head_width=radius, head_length=radius)
-    #
-    # plt.show()
-
 
   def _create_dag(self):
-    contr_idx = self.__container_reverse_indices
-    dag = nx.DiGraph()
-    for c in self.containers:
-      dag.add_node(contr_idx[c.id])
-    for c in self.containers:
-      for d in c.dependencies:
-        dag.add_edge(contr_idx[d], contr_idx[c.id])
-    if not nx.is_directed_acyclic_graph(dag):
-      raise ValueError('Container(s) in the appliance cannot create a DAG')
-    return dag
+    try:
+      contr_idx = self.__container_reverse_indices
+      dag = nx.DiGraph()
+      for c in self.containers:
+        dag.add_node(contr_idx[c.id])
+      for c in self.containers:
+        for d in c.dependencies:
+          dag.add_edge(contr_idx[d], contr_idx[c.id])
+      if not nx.is_directed_acyclic_graph(dag):
+        raise ValueError('Container(s) in the application cannot create a DAG')
+      return dag
+    except KeyError as e:
+      print(self.id)
+      raise e
 
   def __repr__(self):
     return self.id
@@ -186,10 +153,10 @@ class Appliance(Loggable):
     return hash(self.id)
 
   def __eq__(self, other):
-    return isinstance(other, Appliance) and self.id == other.id
+    return isinstance(other, Application) and self.id == other.id
 
 
-class ContainerState(Enum):
+class TaskState(Enum):
 
   NASCENT = 'nascent'
   SUBMITTED = 'submitted'
@@ -197,10 +164,58 @@ class ContainerState(Enum):
   FINISHED = 'finished'
 
 
+class Task:
+
+  def __init__(self, id, contr, cpus, mem, disk=0, gpus=0, runtime=0, output_nbytes=0,
+               placement=None, state=TaskState.NASCENT):
+    self.__id = id
+    self.contr = contr
+    self.cpus = cpus
+    self.mem = mem
+    self.disk = disk
+    self.gpus = gpus
+    self.runtime = runtime
+    self.output_nbytes = output_nbytes
+    self.placement = placement
+    self.state = state
+
+  @property
+  def id(self):
+    return '%s/%s'%(self.contr.id, self.__id)
+
+  @property
+  def is_nascent(self):
+    return self.state == TaskState.NASCENT
+
+  @property
+  def is_submitted(self):
+    return self.state == TaskState.SUBMITTED
+
+  @property
+  def is_running(self):
+    return self.state == TaskState.RUNNING
+
+  @property
+  def is_finished(self):
+    return self.state == TaskState.FINISHED
+
+  def set_nascent(self):
+    self.state == TaskState.NASCENT
+
+  def set_submitted(self):
+    self.state = TaskState.SUBMITTED
+
+  def set_running(self):
+    self.state = TaskState.RUNNING
+
+  def set_finished(self):
+    self.state = TaskState.FINISHED
+
+
 class Container(Loggable):
 
-  def __init__(self, env, id, cpus, mem, disk, gpus=0, runtime=0, output_nbytes=0,
-               dependencies=[], appliance=None, placement=None, state=ContainerState.NASCENT):
+  def __init__(self, env, id, cpus, mem, disk=0, gpus=0, runtime=0, output_nbytes=0, instances=1,
+               dependencies=[], application=None):
     """
 
     :param env
@@ -210,16 +225,14 @@ class Container(Loggable):
     :param disk:
     :param gpus:
     :param runtime: the container runs forever if runtime is 0
-    :param dependencies: list, dependencies of the container in an appliance
+    :param dependencies: list, dependencies of the container in an application
     :param dataflows: list, dataflows
-    :param appliance
-    :param placement: host ID
-    :param state:
+    :param application
     """
     assert isinstance(env, simpy.Environment)
     self.__env = env
     self.__id = id
-    self.__appliance = appliance
+    self.__application = application
     self.__cpus = cpus
     self.__mem = mem
     self.__disk = disk
@@ -228,14 +241,13 @@ class Container(Loggable):
     self.__runtime = runtime
     assert isinstance(output_nbytes, Number)
     self.__output_nbytes = output_nbytes
+    assert isinstance(instances, int) and instances > 0
+    self.__instances = instances
     assert isinstance(dependencies, Iterable) and all([isinstance(d, str)for d in dependencies])
     self.__dependencies = list(dependencies)
-    assert appliance is None or isinstance(appliance, Appliance)
-    self.__appliance = appliance
-    assert placement is None or isinstance(placement, str)
-    self.__placement = placement
-    assert state is None or isinstance(state, ContainerState)
-    self.__state = state
+    assert application is None or isinstance(application, Application)
+    self.__application = application
+    self.__tasks = []
 
   @property
   def id(self):
@@ -258,10 +270,6 @@ class Container(Loggable):
     return self.__gpus
 
   @property
-  def state(self):
-    return self.__state
-
-  @property
   def runtime(self):
     return self.__runtime
 
@@ -274,68 +282,48 @@ class Container(Loggable):
     return self.__output_nbytes
 
   @property
-  def appliance(self):
-    return self.__appliance
+  def instances(self):
+    return self.__instances
 
   @property
-  def placement(self):
-    return self.__placement
+  def application(self):
+    return self.__application
 
   @property
-  def state(self):
-    return self.__state
-
-  @property
-  def is_nascent(self):
-    return self.__state == ContainerState.NASCENT
+  def tasks(self):
+    return list(self.__tasks)
 
   @property
   def is_finished(self):
-    return self.__state == ContainerState.FINISHED
+    tasks = self.__tasks
+    return len(tasks) > 0 and all([t.state == TaskState.FINISHED for t in tasks])
 
-  @property
-  def is_running(self):
-    return self.__state == ContainerState.RUNNING
-
-  @property
-  def is_submitted(self):
-    return self.__state == ContainerState.SUBMITTED
-
-  @appliance.setter
-  def appliance(self, app):
-    assert app is None or isinstance(app, Appliance)
-    self.__appliance = app
-
-  @placement.setter
-  def placement(self, p):
-    assert p is None or isinstance(p, str)
-    self.__placement = p
-
-  def set_nascent(self):
-    self.__state = ContainerState.NASCENT
-
-  def set_submitted(self):
-    self.__state = ContainerState.SUBMITTED
-
-  def set_running(self):
-    self.__state = ContainerState.RUNNING
-
-  def set_finished(self):
-    self.__state = ContainerState.FINISHED
+  @application.setter
+  def application(self, app):
+    assert app is None or isinstance(app, Application)
+    self.__application = app
 
   def add_dependencies(self, *c):
     self.__dependencies = list(set(self.__dependencies + list(c)))
+
+  def generate_tasks(self):
+    tasks = self.__tasks
+    while len(tasks) < self.instances:
+      cpus, mem, disk, gpus = self.__cpus, self.__mem, self.__disk, self.__gpus
+      runtime, output_nbytes = self.__runtime, self.__output_nbytes
+      tasks += Task(len(tasks), self, cpus, mem, disk, gpus, runtime, output_nbytes),
+      yield tasks[-1]
 
   def __repr__(self):
     return self.id
 
   def __hash__(self):
-    return hash((self.id, self.appliance))
+    return hash((self.id, self.application))
 
   def __eq__(self, other):
     return isinstance(other, Container) \
             and self.id == other.id \
-            and self.appliance == other.appliance
+            and self.application == other.application
 
 
 class Dataflow:
