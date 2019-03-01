@@ -2,3 +2,4 @@ numpy==1.15.0
 simpy==3.0.11
 networkx==2.2
 matplotlib==2.2.3
+PyYAML==3.13

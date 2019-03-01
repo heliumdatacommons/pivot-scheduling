@@ -1,6 +1,6 @@
 FROM alpine:3.9
 
-COPY docker /root/pivot-schedule
+COPY . /root/pivot-schedule
 
 RUN apk add --no-cache --update python3 py3-pip gcc python3-dev musl-dev freetype-dev libpng-dev \
     && pip3 install --upgrade --no-cache-dir pip \
