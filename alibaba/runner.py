@@ -12,12 +12,14 @@ from util import Loggable
 
 class ExperimentRun(Process, Loggable):
 
-  def __init__(self, label, cluster, scheduler, load_f, data_dir, n_apps=None, **sched_config):
+  def __init__(self, label, cluster, scheduler, load_f, data_dir, output_size_scale_factor,
+               n_apps=None, **sched_config):
     super(ExperimentRun, self).__init__()
     self.__label = label
     self.__cluster = cluster
     self.__scheduler = scheduler
     self.__load_f = load_f
+    self.__output_size_scale_factor = output_size_scale_factor
     self.__n_apps = n_apps
     self.__sched_config = sched_config
     self.__data_dir = data_dir
@@ -25,12 +27,13 @@ class ExperimentRun(Process, Loggable):
   def run(self):
     data_dir = self.__data_dir
     label, cluster, load_f, n_apps = self.__label, self.__cluster, self.__load_f, self.__n_apps
+    output_size_scale_factor = self.__output_size_scale_factor
     scheduler, sched_config = self.__scheduler, self.__sched_config
     env = Environment()
     meter = Meter(env)
     cluster = cluster.clone(env, meter)
     scheduler = scheduler(env, cluster, meter=meter, **sched_config)
-    load_gen = TraceBasedApplicationGenerator(env, load_f, scheduler, n_apps)
+    load_gen = TraceBasedApplicationGenerator(env, load_f, scheduler, output_size_scale_factor, n_apps)
 
     cluster.start()
     scheduler.start()
@@ -50,14 +53,26 @@ class ExperimentRun(Process, Loggable):
 
 
 class TraceBasedApplicationGenerator(Loggable):
+  """
+  Generate batch jobs as applications runnable on PIVOT from the
+  sampled data of the Alibaba cluster trace.
 
-  MEM_SCALE_FACTOR = 7.68
-  OUTPUT_NBYTES_SCALE_FACTOR = 1000
+  `MEM_SCALE_FACTOR`: The CPU values in the trace are absolute while the memory
+  ones are normalized to 100. Considering every machine in the trace consistently
+  has 96 cores, we assume it equivalent to the `r5d.24xlarge` machine in AWS,
+  which has 96 cores and 768GB. Therefore, we scale the memory demands of the
+  tasks by the `MEM_SCALE_FACTOR` to make them absolute values (in GBs), so that
+  they can be tested on machines with varying resource configurations.
 
-  def __init__(self, env, trace_f, scheduler, n_apps=None):
+  """
+
+  MEM_SCALE_FACTOR = 7.68 * 1024
+
+  def __init__(self, env, trace_f, scheduler, output_size_scale_factor, n_apps=None):
     self.__env = env
     self.__apps = []
     self.__scheduler = scheduler
+    self.__output_size_scale_factor = output_size_scale_factor
     self.__n_apps = n_apps
     self._load_data(trace_f)
 
@@ -81,7 +96,7 @@ class TraceBasedApplicationGenerator(Loggable):
           deps = [str(d) for d in t['dependencies']]
           contrs += Container(env, task_id, cpus=cpus,
                               mem=mem * self.MEM_SCALE_FACTOR,
-                              output_nbytes=mem * self.OUTPUT_NBYTES_SCALE_FACTOR,
+                              output_size=mem * self.__output_size_scale_factor,
                               runtime=runtime, instances=n_inst, dependencies=deps),
         app = Application(env, j['id'], contrs)
         self._bin_insert(j['submit_time'], app)

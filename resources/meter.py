@@ -36,8 +36,8 @@ class Meter(Loggable):
     routes, meta = self.__routes, self.__meta
     cost = 0
     for r, pkts in routes.items():
-      nbytes = sum([sum(nbytes for _, _, nbytes in trans) for trans in pkts.values()])
-      cost += meta.calc_network_traffic_cost(r.src, r.dst, nbytes)
+      data_size = sum([sum(pkt_size for _, _, pkt_size in trans) for trans in pkts.values()])
+      cost += meta.calc_network_traffic_cost(r.src, r.dst, data_size)
     return cost
 
   @property
@@ -83,8 +83,8 @@ class Meter(Loggable):
   def route_check_in(self, r, pkt_id):
     self.__routes[r].setdefault(pkt_id, []).append([self.__env.now])
 
-  def route_check_out(self, r, pkt_id, nbytes):
-    self.__routes[r][pkt_id][-1] += [self.__env.now, nbytes]
+  def route_check_out(self, r, pkt_id, pkt_size):
+    self.__routes[r][pkt_id][-1] += [self.__env.now, pkt_size]
 
   def add_data_transfer(self, timepoint, srcs, dst, data_amt, duration, prop_delay, avg_bw, avg_egress_cost):
     data_transfers = self.__data_transfers

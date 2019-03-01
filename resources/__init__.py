@@ -141,9 +141,9 @@ class Cluster(Loggable):
     route = self.get_route(storage.id, c_host.id)
     evt = env.event()
     self.logger.debug('[%.3f] Task %s starts pulling %d bytes data from %s, '
-                      'bw: %.3f, etc: %.3f'%(env.now, t.id, p.output_nbytes, p.id, route.bw,
-                                             p.output_nbytes / route.bw))
-    yield env.process(route.send(p.output_nbytes, evt))
+                      'bw: %.3f, etc: %.3f' % (env.now, t.id, p.output_size, p.id, route.bw,
+                                               p.output_size / route.bw))
+    yield env.process(route.send(p.output_size, evt))
     yield evt
     self.logger.debug('[%.3f] Task %s finished pulling data from %s' % (env.now, t.id, p.id))
     yield event_q.put(p.id)
@@ -154,12 +154,12 @@ class Cluster(Loggable):
     route = self.get_route(host.id, local_storage.id)
     transfer_evt = env.event()
     self.logger.debug('[%.3f] Task %s starts dumping %d bytes data, '
-                      'bw: %.3f, etc: %.2f' % (env.now, t.id, t.output_nbytes, route.bw,
-                                               t.output_nbytes / route.bw))
-    yield env.process(route.send(t.output_nbytes, transfer_evt))
+                      'bw: %.3f, etc: %.2f' % (env.now, t.id, t.output_size, route.bw,
+                                               t.output_size / route.bw))
+    yield env.process(route.send(t.output_size, transfer_evt))
     yield transfer_evt
     self.logger.debug('[%.3f] Container %s finished dumping of %d bytes '
-                      'data' % (env.now, t.id, t.output_nbytes))
+                      'data' % (env.now, t.id, t.output_size))
 
 
 class Node(Loggable):
@@ -260,8 +260,8 @@ class Host(Node):
 
       # Pull data from the predecessors
       pull_data_start = env.now
-      contr, n_inst = t.contr, t.contr.instances
-      preds = [[t for t in p.tasks] for p in contr.application.get_predecessors(contr.id) if p.output_nbytes > 0]
+      contr, n_inst = t.container, t.container.instances
+      preds = [[t for t in p.tasks] for p in contr.application.get_predecessors(contr.id) if p.output_size > 0]
       if n_inst > 1:
         preds = [rnd.choice(tasks, max(round(len(tasks)/n_inst), 1)) for tasks in preds]
       preds = list(chain.from_iterable(preds))
@@ -276,7 +276,7 @@ class Host(Node):
           finished_p = yield event_q.get()
           finished.add(finished_p)
         prop_delay = max([self._estimate_propagation_delay(t, p) for p in preds])
-        total_data_amt = sum([p.output_nbytes for p in preds])
+        total_data_amt = sum([p.output_size for p in preds])
         avg_bw = np.mean([self._get_bw(t, p) for p in preds])
         avg_egress_cost = np.mean([self._get_egress_cost(t, p) for p in preds])
         total_delay = env.now - pull_data_start
@@ -289,9 +289,6 @@ class Host(Node):
       self.logger.debug('[%.3f] Container %s starts running on host %s, '
                         'etc: %s' % (env.now, t.id, self.id, t.runtime))
       yield env.timeout(t.runtime)
-      # Dumping output data to the local storage
-      # if t.output_nbytes > 0:
-      #   yield env.process(self._dump_data(t))
 
       yield env.process(resc.unsubscribe(t.cpus, t.mem, t.disk, t.gpus))
       self.logger.debug('[%d] Container: %s, cpus: %.1f, mem: %d, disk: %d, gpus: %d' % (
@@ -331,7 +328,7 @@ class Host(Node):
     env, cluster = self.env, self.cluster
     p_host, c_host = cluster.get_host(p.placement), cluster.get_host(c.placement)
     route = cluster.get_route(p_host.id, c_host.id)
-    return p.output_nbytes/route.bw if route.bw > 0 else 0
+    return p.output_size / route.bw if route.bw > 0 else 0
 
   def _pull_data(self, t, p, event_q):
     env, cluster = self.env, self.cluster
@@ -340,9 +337,9 @@ class Host(Node):
     evt = env.event()
     start = env.now
     self.logger.debug('[%.3f] Task %s (%s) starts pulling %.3f bytes data from %s (%s), '
-                      'bw: %.3f, etc: %.3f'%(env.now, t.id, t.placement, p.output_nbytes, p.id, p.placement, route.bw,
-                                             p.output_nbytes / route.bw))
-    yield env.process(route.send(p.output_nbytes, evt))
+                      'bw: %.3f, etc: %.3f' % (env.now, t.id, t.placement, p.output_size, p.id, p.placement, route.bw,
+                                               p.output_size / route.bw))
+    yield env.process(route.send(p.output_size, evt))
     yield evt
     self.logger.debug('[%.3f] Task %s finished pulling data from %s (%.3f)' % (env.now, t.id, p.id, env.now - start))
     yield event_q.put(p.id)
@@ -353,12 +350,12 @@ class Host(Node):
     route = cluster.get_route(self.id, self.id)
     transfer_evt = env.event()
     self.logger.debug('[%.3f] Task %s starts dumping %d bytes data, '
-                      'bw: %.3f, etc: %.2f' % (env.now, t.id, t.output_nbytes, route.bw,
-                                               t.output_nbytes / route.bw))
-    yield env.process(route.send(t.output_nbytes, transfer_evt))
+                      'bw: %.3f, etc: %.2f' % (env.now, t.id, t.output_size, route.bw,
+                                               t.output_size / route.bw))
+    yield env.process(route.send(t.output_size, transfer_evt))
     yield transfer_evt
     self.logger.debug('[%.3f] Task %s finished dumping of %d bytes '
-                      'data' % (env.now, t.id, t.output_nbytes))
+                      'data' % (env.now, t.id, t.output_size))
 
   def __repr__(self):
     return repr((self.id, self.locality))
@@ -419,19 +416,19 @@ class HostResource(Loggable):
 
   @property
   def cpus_available(self):
-    return self.__cpus.level
+    return float(self.__cpus.level)
 
   @property
   def mem_available(self):
-    return self.__mem.level
+    return float(self.__mem.level)
 
   @property
   def disk_available(self):
-    return self.__disk.level
+    return float(self.__disk.level)
 
   @property
   def gpus_available(self):
-    return self.__gpus.level
+    return float(self.__gpus.level)
 
   def subscribe(self, cpus, mem, disk, gpus):
     with self.__lock.request() as lock:
@@ -565,10 +562,11 @@ class ResourceMetadata(metaclass=Singleton):
   def bw(self):
     return dict(self.__bw)
 
-  def calc_network_traffic_cost(self, src, dst, nbytes):
+  def calc_network_traffic_cost(self, src, dst, data_size):
     assert isinstance(src, Node)
     assert isinstance(dst, Node)
-    return self.__cost[src.locality, dst.locality] * nbytes/8000
+    # Convert to GBs
+    return self.__cost[src.locality, dst.locality] * data_size/8000
 
   def _load_locality_info_from_file(self):
     root_dir = os.path.dirname(os.path.abspath(__file__))

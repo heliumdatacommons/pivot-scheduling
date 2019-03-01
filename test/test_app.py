@@ -89,13 +89,13 @@ class RandomApplicationGeneratorTest(unittest.TestCase):
     from application.gen import RandomApplicationGenerator
     env = simpy.Environment()
     self.gen = RandomApplicationGenerator(env, n_nodes_lo=2, n_nodes_hi=20,
-                                        edge_den_lo=.3, edge_den_hi=1.,
-                                        cpus_lo=.1, cpus_hi=4,
-                                        mem_lo=128, mem_hi=1024 * 4,
-                                        disk_lo=1024, disk_hi=1024 * 10,
-                                        gpus_lo=0, gpus_hi=4,
-                                        runtime_lo=60, runtime_hi=60 * 60,
-                                        output_nbytes_lo=0, output_nbytes_hi=10000)
+                                          edge_den_lo=.3, edge_den_hi=1.,
+                                          cpus_lo=.1, cpus_hi=4,
+                                          mem_lo=128, mem_hi=1024 * 4,
+                                          disk_lo=1024, disk_hi=1024 * 10,
+                                          gpus_lo=0, gpus_hi=4,
+                                          runtime_lo=60, runtime_hi=60 * 60,
+                                          output_size_lo=0, output_size_hi=10000)
 
   def test_application_generation(self):
     app = self.gen.generate()

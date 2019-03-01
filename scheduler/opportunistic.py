@@ -17,5 +17,4 @@ class OpportunisticGlobalScheduler(GlobalSchedulerBase):
         h = self.cluster.get_host(self.randomizer.choice(qualified))
         resc[h.id] -= t_demand
         t.placement = h.id
-
-      return list(tasks)
+    return list(tasks)

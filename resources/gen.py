@@ -10,6 +10,8 @@ from util import Loggable
 
 class RandomClusterGenerator(Loggable):
 
+  LOCAL_BW = 2 *1e5
+
   def __init__(self, env, cpus_lo, cpus_hi, mem_lo, mem_hi, disk_lo, disk_hi, gpus_lo, gpus_hi,
                meter=None, seed=None):
     assert isinstance(env, simpy.Environment)
@@ -41,9 +43,8 @@ class RandomClusterGenerator(Loggable):
       mem = int(rnd.choice(np.arange(self.__mem_lo, self.__mem_hi + 1024, 1024)))
       disk = int(rnd.choice(np.arange(self.__disk_lo, self.__disk_hi + 1024, 1024)))
       gpus = int(rnd.randint(self.__gpus_lo, self.__gpus_hi + 1))
-      return [Host(self.__env, cpus, mem, disk, gpus,
-                   locality=rnd.choice(meta.zones), meter=meter)
-              for _ in range(n_host)]
+      return [Host(self.__env, cpus, mem, disk, gpus, locality=meta.zones[i%len(meta.zones)], meter=meter)
+              for i in range(n_host)]
     else:
       return [Host(self.__env,
                    int(rnd.choice(np.arange(self.__cpus_lo, self.__cpus_hi + 2, 2))),
@@ -63,7 +64,7 @@ class RandomClusterGenerator(Loggable):
     for src in hosts:
       for dst in hosts:
         if src == dst:
-          routes += NetworkRoute(env, src, dst, 2 * 10e4),
+          routes += NetworkRoute(env, src, dst, self.LOCAL_BW),
         else:
           routes += NetworkRoute(env, src, dst, meta.bw[(src.locality, dst.locality)]),
     for h in hosts:

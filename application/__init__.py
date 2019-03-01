@@ -41,7 +41,7 @@ class Application(Loggable):
 
   @property
   def avg_data_size(self):
-    return np.mean([c.output_nbytes for c in self.containers])
+    return np.mean([c.output_size for c in self.containers])
 
   @property
   def dag(self):
@@ -75,7 +75,7 @@ class Application(Loggable):
   def clone(self):
     return Application(self.__env, str(uuid.uuid4()),
                        containers=[Container(self.__env, c.id, c.cpus, c.mem, c.disk, c.gpus,
-                                           c.runtime, c.output_nbytes, c.instances, c.dependencies)
+                                             c.runtime, c.output_size, c.instances, c.dependencies)
                                  for c in self.containers])
 
   def get_container_by_id(self, id):
@@ -166,22 +166,22 @@ class TaskState(Enum):
 
 class Task:
 
-  def __init__(self, id, contr, cpus, mem, disk=0, gpus=0, runtime=0, output_nbytes=0,
+  def __init__(self, id, container, cpus, mem, disk=0, gpus=0, runtime=0, output_size=0,
                placement=None, state=TaskState.NASCENT):
     self.__id = id
-    self.contr = contr
+    self.container = container
     self.cpus = cpus
     self.mem = mem
     self.disk = disk
     self.gpus = gpus
     self.runtime = runtime
-    self.output_nbytes = output_nbytes
+    self.output_size = output_size
     self.placement = placement
     self.state = state
 
   @property
   def id(self):
-    return '%s/%s'%(self.contr.id, self.__id)
+    return '%s/%s'%(self.container.id, self.__id)
 
   @property
   def is_nascent(self):
@@ -214,7 +214,7 @@ class Task:
 
 class Container(Loggable):
 
-  def __init__(self, env, id, cpus, mem, disk=0, gpus=0, runtime=0, output_nbytes=0, instances=1,
+  def __init__(self, env, id, cpus, mem, disk=0, gpus=0, runtime=0, output_size=0, instances=1,
                dependencies=[], application=None):
     """
 
@@ -239,8 +239,8 @@ class Container(Loggable):
     self.__gpus = gpus
     assert isinstance(runtime, Number)
     self.__runtime = runtime
-    assert isinstance(output_nbytes, Number)
-    self.__output_nbytes = output_nbytes
+    assert isinstance(output_size, Number)
+    self.__output_size = output_size
     assert isinstance(instances, int) and instances > 0
     self.__instances = instances
     assert isinstance(dependencies, Iterable) and all([isinstance(d, str)for d in dependencies])
@@ -278,8 +278,8 @@ class Container(Loggable):
     return list(self.__dependencies)
 
   @property
-  def output_nbytes(self):
-    return self.__output_nbytes
+  def output_size(self):
+    return self.__output_size
 
   @property
   def instances(self):
@@ -310,8 +310,8 @@ class Container(Loggable):
     tasks = self.__tasks
     while len(tasks) < self.instances:
       cpus, mem, disk, gpus = self.__cpus, self.__mem, self.__disk, self.__gpus
-      runtime, output_nbytes = self.__runtime, self.__output_nbytes
-      tasks += Task(len(tasks), self, cpus, mem, disk, gpus, runtime, output_nbytes),
+      runtime, output_size = self.__runtime, self.__output_size
+      tasks += Task(len(tasks), self, cpus, mem, disk, gpus, runtime, output_size),
       yield tasks[-1]
 
   def __repr__(self):
@@ -328,13 +328,13 @@ class Container(Loggable):
 
 class Dataflow:
 
-  def __init__(self, src, dst, nbytes):
+  def __init__(self, src, dst, data_size):
     assert isinstance(src, str)
     assert isinstance(dst, str)
-    assert isinstance(nbytes, int) and nbytes > 0
+    assert isinstance(data_size, int) and data_size > 0
     self.__src = src
     self.__dst = dst
-    self.__nbytes = nbytes
+    self.__data_size = data_size
 
   @property
   def src(self):
@@ -345,10 +345,10 @@ class Dataflow:
     return self.__dst
 
   @property
-  def nbytes(self):
-    return self.__nbytes
+  def data_size(self):
+    return self.__data_size
 
   def __repr__(self):
-    return '%s -> %s: %d bytes'%(self.src, self.dst, self.nbytes)
+    return '%s -> %s: %d bytes'%(self.src, self.dst, self.data_size)
 
 

@@ -23,7 +23,7 @@ class CostAwareGlobalScheduler(GlobalSchedulerBase):
     self.__realtime_bw = realtime_bw
     self.__host_decay = host_decay
     if host_decay:
-      self.__n_contr = None
+      self.__n_container = None
 
   def schedule(self, tasks):
     bin_pack_algo = self.__bin_pack_algo
@@ -46,7 +46,7 @@ class CostAwareGlobalScheduler(GlobalSchedulerBase):
     cluster = self.cluster
     groups = defaultdict(list)
     for t in tasks:
-      c, app = t.contr, t.contr.application
+      c, app = t.container, t.container.application
       preds = [t for p in app.get_predecessors(c.id) for t in p.tasks]
       if preds:
         placement, _ = max(Counter([t.placement for t in preds]).items(), key=lambda x: x[1])
@@ -64,7 +64,7 @@ class CostAwareGlobalScheduler(GlobalSchedulerBase):
     env, cluster, meta = self.env, self.cluster, self.cluster.meta
     host_decay, rt_bw = self.__host_decay, self.__realtime_bw
     if host_decay:
-      n_contr = self.__n_contr
+      n_container = self.__n_container
 
     def host_score_func(item):
       h, t = item
@@ -78,7 +78,7 @@ class CostAwareGlobalScheduler(GlobalSchedulerBase):
         self.logger.debug('bw: %.3f, rt bw: %.3f'%(out_route.bw, out_route.realtime_bw))
       bw = (in_route.realtime_bw + out_route.realtime_bw) if rt_bw else (in_route.bw + out_route.bw)
       t = meta.cost[(anchor.locality, h.locality)] + meta.cost[(h.locality, anchor.locality)]
-      decay = max(n_contr[h.id] if host_decay else 0, 1)
+      decay = max(n_container[h.id] if host_decay else 0, 1)
 
       return t * r * decay/bw
 
@@ -94,7 +94,7 @@ class CostAwareGlobalScheduler(GlobalSchedulerBase):
         t.placement = h.id
         resc[h.id] -= t_demand
         if host_decay:
-          n_contr[h.id] += 1
+          n_container[h.id] += 1
 
   def _first_fit(self, hosts, tasks, data_src, resc):
     env, cluster, meta = self.env, self.cluster, self.cluster.meta

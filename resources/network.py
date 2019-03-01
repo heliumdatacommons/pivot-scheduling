@@ -9,13 +9,13 @@ from util import Loggable
 
 class Packet:
 
-  SIZE = 1000
+  PACKET_SIZE = 1000
 
-  def __init__(self, nbytes, transfer_event):
+  def __init__(self, num_mbs, transfer_event):
     self.__id = str(uuid.uuid4())
-    assert isinstance(nbytes, Number) and nbytes > 0
+    assert isinstance(num_mbs, Number) and num_mbs > 0
     assert isinstance(transfer_event, simpy.Event)
-    self.__nbytes = nbytes
+    self.__num_mbs = num_mbs
     self.__transfer_event = transfer_event
 
   @property
@@ -23,17 +23,17 @@ class Packet:
     return self.__id
 
   @property
-  def nbytes(self):
-    return self.__nbytes
+  def num_mbs(self):
+    return self.__num_mbs
 
   @property
   def is_transferred(self):
-    return self.__nbytes == 0
+    return self.__num_mbs == 0
 
   def decrement(self):
-    nbytes = self.nbytes
-    self.__nbytes = nbytes - min(nbytes, Packet.SIZE)
-    if self.__nbytes == 0:
+    total_mbs = self.num_mbs
+    self.__num_mbs = total_mbs - min(total_mbs, Packet.PACKET_SIZE)
+    if self.__num_mbs == 0:
       self.__transfer_event.succeed()
 
 
@@ -69,7 +69,7 @@ class NetworkRoute(Loggable):
 
   @property
   def realtime_bw(self):
-    est = (sum([p.nbytes for p in self.__pkts.items]) + 1)/self.__bw
+    est = (sum([p.num_mbs for p in self.__pkts.items]) + 1) / self.__bw
     return 1/est if est else self.__bw
 
   @property
@@ -80,21 +80,21 @@ class NetworkRoute(Loggable):
   def cluster(self, cluster):
     self.__cluster = cluster
 
-  def send(self, nbytes, transfer_event):
-    yield self.__pkts.put(Packet(nbytes, transfer_event))
+  def send(self, pkt_size, transfer_event):
+    yield self.__pkts.put(Packet(pkt_size, transfer_event))
 
   def _transfer(self):
     env, meter = self.__env, self.__meter
     while True:
       pkt = yield self.__pkts.get()
-      nbytes = min(pkt.nbytes, Packet.SIZE)
+      pkt_size = min(pkt.num_mbs, Packet.PACKET_SIZE)
       if meter:
         meter.route_check_in(self, pkt.id)
       if self.__bw > 0:
-        yield env.timeout(nbytes/self.__bw)
+        yield env.timeout(pkt_size/self.__bw)
       # self.logger.debug('[%s] processing packet %s'%(env.now, pkt))
       if meter:
-        meter.route_check_out(self, pkt.id, nbytes)
+        meter.route_check_out(self, pkt.id, pkt_size)
       pkt.decrement()
       if not pkt.is_transferred:
         yield self.__pkts.put(pkt)

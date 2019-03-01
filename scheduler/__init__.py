@@ -114,15 +114,15 @@ class GlobalSchedulerBase(Loggable):
         else:
           self.logger.error('[%d] Task state is not nascent: %s'%(env.now, t.id))
       yield env.timeout(interval)
-    # if not self.__is_stopped:
-    self.logger.error('Scheduler quit')
+    if not self.__is_stopped:
+      self.logger.error('Scheduler quit')
 
   def _listen(self):
     env, local_schedulers, submit_q = self.__env, self.__local_schedulers, self.__submit_q
     while not self.__is_stopped or any([not lc.application.is_finished for lc in local_schedulers.values()]):
       success, t = yield self.__notify_q.get()
       # self.logger.debug('[%.3f] Task %s finished: %s'%(self.__env.now, t.id, success))
-      app = t.contr.application
+      app = t.container.application
       if not app:
         self.logger.error('Application of task %s is not set'%t.id)
         continue
@@ -143,8 +143,8 @@ class GlobalSchedulerBase(Loggable):
         self.logger.debug('Application end time: %d'%end_time)
         self.logger.info('[%.3f] Application %s finished in %.3f seconds'%(env.now, app.id, end_time - start_time))
         local_schedulers.pop(app, None)
-    # if not self.__is_stopped:
-    self.logger.error('Scheduler quit')
+    if not self.__is_stopped:
+      self.logger.error('Scheduler quit')
 
 
 class LocalScheduler(Loggable):
@@ -212,7 +212,7 @@ class LocalScheduler(Loggable):
     assert isinstance(t, application.Task)
     app, env = self.application, self.env
     if t.is_finished:
-      cur_c = t.contr
+      cur_c = t.container
       if cur_c.is_finished:
         successors = app.get_ready_successors(cur_c.id)
         for c in successors:
